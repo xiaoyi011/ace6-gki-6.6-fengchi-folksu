@@ -91,19 +91,23 @@ git log -1 --pretty='    %s' 2>/dev/null || true
 
 # --------------------------- 2. 风驰内核补丁 ---------------------------------
 if [ "$APPLY_FENGCHI" = "1" ]; then
-  log "移植风驰内核 (fengchi.patch: HMBIRD 调度类)"
-  PATCH_FILE="$REPO_ROOT/patches/fengchi.patch"
-  [ -f "$PATCH_FILE" ] || die "找不到 $PATCH_FILE"
+  log "移植风驰内核 (HMBIRD 调度类)"
+  # fengchi-ace6.patch = 上游 fengchi.patch 在官方 ace_6 分支上重基后的版本,
+  # 19 处基线漂移已逐条解决, 并验证 git apply 0 reject
+  PATCH_FILE="$REPO_ROOT/patches/fengchi-ace6.patch"
+  [ -f "$PATCH_FILE" ] || PATCH_FILE="$REPO_ROOT/patches/fengchi.patch"
+  [ -f "$PATCH_FILE" ] || die "找不到风驰补丁"
+  echo "    补丁: $(basename "$PATCH_FILE")"
 
   # 风驰以 hmbird 取代 AOSP sched_ext, 基线必须是带 SLIM_SCHED/SCHED_CLASS_EXT 的树
   grep -q '^CONFIG_SCHED_CLASS_EXT=y' arch/arm64/configs/gki_defconfig \
     || warn "基线 gki_defconfig 没有 CONFIG_SCHED_CLASS_EXT=y, 补丁可能不匹配"
 
   APPLIED=0
-  if git apply --3way --whitespace=nowarn "$PATCH_FILE" 2>/dev/null; then
-    echo "    已用 git apply --3way 应用"; APPLIED=1
-  elif git apply -p1 --whitespace=nowarn "$PATCH_FILE" 2>/dev/null; then
+  if git apply -p1 --whitespace=nowarn "$PATCH_FILE" 2>/dev/null; then
     echo "    已用 git apply -p1 应用"; APPLIED=1
+  elif git apply --3way --whitespace=nowarn "$PATCH_FILE" 2>/dev/null; then
+    echo "    已用 git apply --3way 应用"; APPLIED=1
   else
     warn "git apply 失败, 回退 patch -p1 -F3"
     if patch -p1 -F3 --no-backup-if-mismatch < "$PATCH_FILE"; then APPLIED=1; fi
@@ -117,6 +121,12 @@ if [ "$APPLY_FENGCHI" = "1" ]; then
   fi
   [ "$APPLIED" = "1" ] || die "风驰补丁无法应用"
 
+  # 结构校验: hmbird 实现必须在, AOSP sched_ext 必须已被移除
+  [ -f kernel/sched/hmbird/hmbird.c ] || die "缺少 kernel/sched/hmbird/hmbird.c, 风驰补丁不完整"
+  [ -f include/linux/sched/sched_ext.h ] || die "缺少 include/linux/sched/sched_ext.h"
+  [ -f kernel/sched/ext.c ] && die "AOSP kernel/sched/ext.c 仍在"
+  [ -f include/linux/sched/ext.h ] && die "AOSP include/linux/sched/ext.h 仍在"
+
   # 补丁应把 CONFIG_SCHED_CLASS_EXT 换成 CONFIG_HMBIRD_SCHED
   if grep -q '^CONFIG_HMBIRD_SCHED=y' arch/arm64/configs/gki_defconfig; then
     echo "    CONFIG_HMBIRD_SCHED=y 已就位"
@@ -124,7 +134,7 @@ if [ "$APPLY_FENGCHI" = "1" ]; then
     warn "补丁未写入 CONFIG_HMBIRD_SCHED=y, 手工补上"
     echo 'CONFIG_HMBIRD_SCHED=y' >> arch/arm64/configs/gki_defconfig
   fi
-  echo "    新增 hmbird 源文件: $(ls kernel/sched/hmbird/ 2>/dev/null | wc -l) 个"
+  echo "    hmbird 源文件: $(ls kernel/sched/hmbird/ | wc -l) 个"
 else
   warn "APPLY_FENGCHI=0 -> 不打风驰补丁 (将保留 AOSP sched_ext, 无 HMBIRD/风驰)"
 fi

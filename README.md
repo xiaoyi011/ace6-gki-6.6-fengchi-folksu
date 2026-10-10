@@ -22,8 +22,27 @@ scripts/build.sh              主编译脚本（本地/Linux 也能直接跑）
 scripts/make_ak3.sh           打包 AnyKernel3 刷机包
 scripts/apk_sign.py           从 APK 提取 KernelSU 侧管理器签名 (size, sha256)
 ak3/anykernel.sh              Ace 6 专用 AnyKernel3 刷机脚本
-patches/fengchi.patch         风驰内核补丁 (HMBIRD/scx 移植)
+patches/fengchi-ace6.patch    风驰内核补丁（已重基到 ace_6，0 reject）
+patches/fengchi.patch         上游原始风驰补丁（保留备查）
 ```
+
+### 风驰补丁是怎么来的
+
+上游 `fengchi.patch` 的基线是 cctv18 fork 的 **一加13** 分支，直接打到官方 **ace_6** 分支上有
+**19 个 hunk 冲突**（涉及 6 个文件，都在 ACK LTS 频繁改动的区域）。`fengchi-ace6.patch` 是重基
+结果，19 处冲突逐条解决并验证：
+
+| 文件 | 冲突 hunk | 处理方式 |
+|---|---|---|
+| `include/linux/cpufreq.h` | 1 | **丢弃** —— ace_6 里 `store/show_scaling_governor` 声明已存在 |
+| `include/linux/sched.h` | 2 | 去掉 `sched_prop`/`scx` KABI 槽；**保留 `task_dma_buf_info` 在槽 3**（ace_6 新增，出厂厂商模块按此偏移编译） |
+| `kernel/fork.c` | 2 | `hmbird_free()` 替换；标签合并时**保留 ace_6 新增的 `bad_fork_cleanup_dmabuf:`** |
+| `kernel/time/tick-sched.c` | 1 | 插入 `android_vh_tick_nohz_idle_stop_tick_handler()` 调用 |
+| `kernel/sched/debug.c` | 1 | `ext.enabled` → `hmbird.enabled` + 2 个新 `__PS` |
+| `kernel/sched/core.c` | 12 | `sched_move_task` 一处**丢弃**（ace_6 已是展开版）；其余为 `hmbird_tasks_lock`、`__setscheduler_prio`、cgroup hmbird deadline 等逐条移植 |
+
+生成后经校验：`git apply --reject` → **0 reject / 0 failed hunk**，所有文件 `#ifdef/#endif` 配平。
+
 
 ## 怎么用（云编译）
 
