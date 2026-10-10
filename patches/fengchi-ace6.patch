@@ -3003,7 +3003,7 @@ diff --git a/kernel/sched/core.c b/kernel/sched/core.c
  
  		/* Also unlocks the rq: */
  		rq = context_switch(rq, prev, next, &rf);
-@@ -7258,25 +7335,23 @@
+@@ -7258,25 +7335,31 @@
  }
  EXPORT_SYMBOL(default_wake_function);
  
@@ -3021,23 +3021,35 @@ diff --git a/kernel/sched/core.c b/kernel/sched/core.c
 -	else if (task_on_scx(p))
 -		p->sched_class = &ext_sched_class;
 -#endif
+-	else if (rt_prio(prio))
+-		p->sched_class = &rt_sched_class;
+-	else
+-		p->sched_class = &fair_sched_class;
+-
 +static void __setscheduler_prio(struct task_struct *p, int prio)
++{
 +#ifdef CONFIG_HMBIRD_SCHED
 +	bool on_hmbird = task_on_hmbird(p);
 +
++	if (p->sched_class == &stop_sched_class)
 +		;
++	else if (dl_prio(prio))
++		p->sched_class = &dl_sched_class;
 +	else if (rt_prio(prio) && on_hmbird)
 +		p->sched_class = &hmbird_sched_class;
- 	else if (rt_prio(prio))
- 		p->sched_class = &rt_sched_class;
++	else if (rt_prio(prio))
++		p->sched_class = &rt_sched_class;
 +	else if (on_hmbird)
 +		p->sched_class = &hmbird_sched_class;
- 	else
- 		p->sched_class = &fair_sched_class;
--
++	else
++		p->sched_class = &fair_sched_class;
 +#else
 +	if (dl_prio(prio))
 +		p->sched_class = &dl_sched_class;
++	else if (rt_prio(prio))
++		p->sched_class = &rt_sched_class;
++	else
++		p->sched_class = &fair_sched_class;
 +#endif
  	p->prio = prio;
  	trace_android_rvh_setscheduler_prio(p);
