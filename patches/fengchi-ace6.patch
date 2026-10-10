@@ -3414,10 +3414,9 @@ diff --git a/kernel/sched/core.c b/kernel/sched/core.c
  	if (parent)
  		sched_online_group(tg, parent);
  
-@@ -10926,13 +11071,83 @@
+@@ -10926,13 +11071,76 @@
  }
  #endif
- 
 +#ifdef CONFIG_HMBIRD_SCHED
 +static inline void update_cgroup_ids_table(int ids, u8 hmbird_cgroup_deadline_idx)
 +{
@@ -3427,7 +3426,7 @@ diff --git a/kernel/sched/core.c b/kernel/sched/core.c
 +	}
 +	cgroup_ids_table[ids] = hmbird_cgroup_deadline_idx;
 +}
-+
+ 
 +static int cgroup_write_hmbird_deadline(struct cgroup_subsys_state *css,
 +						struct cftype *cftype, u64 dl)
 +{
@@ -3479,12 +3478,6 @@ diff --git a/kernel/sched/core.c b/kernel/sched/core.c
 +	}
 +}
 +#endif
-+
-+	cgroup_taskset_for_each(task, css, tset) {
-+#ifdef CONFIG_HMBIRD_SCHED
-+		hmbird_change_rt_sched_prop(css, task, task->prio);
-+#endif
-+	}
 +
  static void cpu_cgroup_attach(struct cgroup_taskset *tset)
  {
