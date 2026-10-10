@@ -1,0 +1,135 @@
+name: Build Ace6 GKI 6.6 (fengchi + FolkSU)
+
+# 一加 Ace 6 (PLQ110 / ossi / SM8750 "sun")
+#   GKI 6.6 官方 ace_6 源码 + 风驰内核(HMBIRD/scx) + FolkSU(KernelSU, UAPI=5)
+
+on:
+  workflow_dispatch:
+    inputs:
+      apply_fengchi:
+        description: '移植风驰内核 (HMBIRD/scx 调度器)'
+        type: boolean
+        default: true
+      apply_susfs:
+        description: '附加 SuSFS 隐藏补丁 (与 FolkSU 目录结构可能冲突)'
+        type: boolean
+        default: false
+      localversion:
+        description: '内核版本后缀, 需与出厂 vendor_dlkm 的 vermagic 对齐'
+        type: string
+        default: '-android15-8-o-4k'
+      ksu_expected_size:
+        description: 'FolkSU 管理器证书长度 (十六进制)'
+        type: string
+        default: '0x2cc'
+      ksu_expected_hash:
+        description: 'FolkSU 管理器证书 SHA-256'
+        type: string
+        default: '2d89b50aaf1db013c2b6738f973f48b62ea21a3a8d7216bfec3521065d448458'
+      build_target:
+        description: 'make 目标 (Image 最快, all 会连模块一起编)'
+        type: string
+        default: 'Image'
+
+concurrency:
+  group: ace6-gki-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: build kernel
+    runs-on: ubuntu-22.04
+    timeout-minutes: 355
+
+    steps:
+      - name: 检出
+        uses: actions/checkout@v7
+
+      - name: 释放磁盘空间
+        run: |
+          echo "=== before ==="; df -h /
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
+                      /opt/hostedtoolcache/CodeQL /usr/local/share/boost \
+                      "$AGENT_TOOLSDIRECTORY" /usr/local/lib/node_modules
+          sudo apt-get clean
+          echo "=== after ==="; df -h /
+
+      - name: 安装编译依赖
+        run: |
+          set -eux
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends \
+            bc bison flex libelf-dev libssl-dev cpio zip unzip rsync kmod ccache \
+            gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu \
+            python3 git wget curl xz-utils
+          wget -q https://apt.llvm.org/llvm.sh -O /tmp/llvm.sh
+          chmod +x /tmp/llvm.sh
+          sudo /tmp/llvm.sh 18 all
+          # 统一无版本号的工具名, 避免 kbuild 找不到 clang / ld.lld
+          sudo ln -sf "$(command -v clang-18)" /usr/local/bin/clang
+          sudo ln -sf "$(command -v clang++-18)" /usr/local/bin/clang++ 2>/dev/null || true
+          sudo ln -sf "$(command -v ld.lld-18)" /usr/local/bin/ld.lld
+          for t in ar nm objcopy objdump readelf strip ranlib; do
+            if [ -x "/usr/bin/llvm-$t-18" ]; then sudo ln -sf "/usr/bin/llvm-$t-18" "/usr/local/bin/llvm-$t"; fi
+          done
+          clang --version | head -2
+          ld.lld --version | head -1
+          aarch64-linux-gnu-ld --version | head -1
+
+      - name: 配置 ccache
+        uses: actions/cache@v5
+        with:
+          path: ~/.ccache
+          key: ace6-gki-${{ github.event.inputs.localversion }}-${{ github.run_id }}
+          restore-keys: |
+            ace6-gki-${{ github.event.inputs.localversion }}-
+            ace6-gki-
+      - name: 启用 ccache
+        run: |
+          sudo mkdir -p /root/.ccache && sudo chmod 777 /root/.ccache || true
+          echo "CCACHE_DIR=$HOME/.ccache" >> "$GITHUB_ENV"
+          echo "CCACHE_MAXSIZE=5G" >> "$GITHUB_ENV"
+          echo "CCACHE_COMPILERCHECK=content" >> "$GITHUB_ENV"
+          echo "CCACHE_SLOPPINESS=time_macros,include_file_ctime,include_file_mtime" >> "$GITHUB_ENV"
+          echo "PATH=/usr/lib/ccache:$PATH" >> "$GITHUB_ENV"
+          ccache --version | head -1
+
+      - name: 编译内核
+        env:
+          APPLY_FENGCHI: ${{ github.event.inputs.apply_fengchi == 'true' && '1' || '0' }}
+          APPLY_SUSFS: ${{ github.event.inputs.apply_susfs == 'true' && '1' || '0' }}
+          LOCALVERSION_SUFFIX: ${{ github.event.inputs.localversion }}
+          KSU_EXPECTED_SIZE: ${{ github.event.inputs.ksu_expected_size }}
+          KSU_EXPECTED_HASH: ${{ github.event.inputs.ksu_expected_hash }}
+          BUILD_TARGET: ${{ github.event.inputs.build_target }}
+          INSTALL_DEPS: '0'
+        run: |
+          bash scripts/build.sh 2>&1 | tee build.log
+          echo "---- ccache 统计 ----"
+          ccache -s || true
+
+      - name: 打包 AnyKernel3 刷机包
+        run: |
+          set -eux
+          SUFFIX="${{ github.event.inputs.localversion }}"
+          bash scripts/make_ak3.sh work/out/Image dist "Ace6-GKI-6.6-fengchi-FolkSU${SUFFIX}.zip"
+          ls -lh dist/
+
+      - name: 上传日志
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: build-log-${{ github.run_number }}
+          path: |
+            build.log
+            work/out/build-info.txt
+          if-no-files-found: ignore
+          retention-days: 14
+
+      - name: 上传刷机包
+        uses: actions/upload-artifact@v7
+        with:
+          name: Ace6-GKI-6.6-fengchi-FolkSU-${{ github.run_number }}
+          path: dist/*.zip
+          if-no-files-found: error
+          retention-days: 30

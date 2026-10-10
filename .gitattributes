@@ -1,0 +1,5 @@
+# 这个仓库里全是 Linux 内核补丁和 shell 脚本, 绝对不能做换行符转换
+* -text
+*.patch -text
+*.sh -text
+*.yml -text
