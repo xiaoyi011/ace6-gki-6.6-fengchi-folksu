@@ -112,7 +112,18 @@ jobs:
         run: |
           set -eux
           SUFFIX="${{ github.event.inputs.localversion }}"
-          bash scripts/make_ak3.sh work/out/Image dist "Ace6-GKI-6.6-fengchi-FolkSU${SUFFIX}.zip"
+          # Image 在 out/arch/arm64/boot/ 下, 不在 out/ 根目录
+          IMG="$(find work/out -type f -path '*arch/arm64/boot*' -name Image 2>/dev/null | head -n1)"
+          [ -n "$IMG" ] || IMG="$(find work -type f -name Image 2>/dev/null | head -n1)"
+          if [ -z "$IMG" ]; then
+            echo "[x] 找不到内核 Image, 实际产出:"
+            find work -maxdepth 6 \( -name 'Image*' -o -name 'vmlinux*' \) 2>/dev/null | head -40
+            exit 1
+          fi
+          echo ">>> 使用 Image: $IMG"; ls -lh "$IMG"
+          HB="$(strings "$IMG" 2>/dev/null | grep -c -i hmbird || true)"
+          echo ">>> 风驰(hmbird) 符号命中: $HB"
+          bash scripts/make_ak3.sh "$IMG" dist "Ace6-GKI-6.6-fengchi-FolkSU${SUFFIX}.zip"
           ls -lh dist/
 
       - name: 上传日志
