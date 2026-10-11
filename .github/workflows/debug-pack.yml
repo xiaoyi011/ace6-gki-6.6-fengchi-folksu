@@ -1,9 +1,9 @@
 name: debug-pack
 
-# 临时调试工作流 (不参与正式构建):
-#   1. 复现 run #7 打包步骤的 exit 15 到底出自哪条命令 (bash -x)
-#   2. 直接测原生 zip 在这种负载下的退出码
-#   3. 用 python zipfile + unzip -t 独立校验 mkzip.js 产物是否是真 zip
+# 临时调试工作流 (不参与正式构建, 用完删除):
+#   1. 复现 run #7 打包步骤 exit 15 到底出自哪条命令 (bash -x 全量追踪)
+#   2. 直接裸测原生 zip / unzip 在这种负载下的退出码
+#   3. 跑新版 make_ak3.sh(mkzip.js), 并用 Info-ZIP unzip -t 独立校验产物
 on:
   workflow_dispatch:
 
@@ -40,7 +40,7 @@ jobs:
           git show e452144:scripts/make_ak3.sh > scripts/make_ak3_old.sh
           bash -x scripts/make_ak3_old.sh work/out/Image dist OLD.zip > /tmp/old.log 2>&1
           echo "OLD_MAKE_AK3_EXIT=$?"
-          echo "---- 旧路径日志尾部 ----"
+          echo "---- 旧路径日志尾部 (看最后一条 + 命令) ----"
           tail -45 /tmp/old.log
 
       - name: 裸测原生 zip / unzip 退出码
@@ -48,14 +48,16 @@ jobs:
           set +e
           rm -rf /tmp/ak3raw
           git clone --depth=1 -q https://github.com/osm0sis/AnyKernel3.git /tmp/ak3raw
-          cd /tmp/ak3raw && rm -rf .git && cp /home/runner/work/*/*/work/out/Image Image
+          cd /tmp/ak3raw || exit 1
+          rm -rf .git
+          cp "$GITHUB_WORKSPACE/work/out/Image" Image
           zip -r9 /tmp/raw.zip . > /tmp/zip.log 2>&1
           echo "RAW_ZIP_EXIT=$?"
           cat /tmp/zip.log
           ls -l /tmp/raw.zip
           unzip -t /tmp/raw.zip > /tmp/unzipt.log 2>&1
-          echo "UNZIP_T_EXIT=$?"
-          tail -5 /tmp/unzipt.log
+          echo "RAW_UNZIP_T_EXIT=$?"
+          tail -4 /tmp/unzipt.log
 
       - name: 新路径 (mkzip.js / Node)
         run: |
@@ -65,39 +67,37 @@ jobs:
           echo "---- 新路径日志尾部 ----"
           tail -35 /tmp/new.log
 
-      - name: 独立校验 mkzip.js 产物
+      - name: 用 Info-ZIP 独立校验三个产物
         if: always()
         run: |
           set +e
-          ls -lh dist/ || true
-          for z in dist/OLD.zip dist/NEW.zip /tmp/raw.zip; do
+          ls -lh "$GITHUB_WORKSPACE/dist/" || true
+          for z in "$GITHUB_WORKSPACE/dist/OLD.zip" "$GITHUB_WORKSPACE/dist/NEW.zip" /tmp/raw.zip; do
             echo "=========== $z"
             if [ ! -f "$z" ]; then echo "  (不存在)"; continue; fi
             ls -l "$z"
+            echo "  -- unzip -t:"
             unzip -t "$z" 2>&1 | tail -3
-            python3 -c "
-import zipfile,sys
-f=sys.argv[1]
-try:
-    z=zipfile.ZipFile(f)
-    print('  python zipfile: testzip ->', z.testzip())
-    print('   条目数:', len(z.infolist()))
-    for i in z.infolist()[:12]:
-        print('   ', i.filename, i.file_size, 'method', i.compress_type)
-except Exception as e:
-    print('  python zipfile 打不开:', type(e).__name__, e)
-" "$z"
+            echo "  -- 条目 (前 12 行):"
+            unzip -l "$z" 2>&1 | head -12
           done
 
-      - name: 校验解压后 Image 是否逐字节一致
+      - name: 校验解压后 Image 逐字节一致
         if: always()
         run: |
           set +e
           rm -rf /tmp/x && mkdir -p /tmp/x
-          cd /tmp/x && unzip -q /home/runner/work/*/*/dist/NEW.zip
+          cd /tmp/x || exit 1
+          unzip -q "$GITHUB_WORKSPACE/dist/NEW.zip"
           ls -lh
-          sha256sum Image /home/runner/work/*/*/work/out/Image
-          cmp Image /home/runner/work/*/*/work/out/Image && echo "IMAGE 逐字节一致 OK" || echo "IMAGE 不一致 !!"
+          sha256sum Image "$GITHUB_WORKSPACE/work/out/Image"
+          if cmp Image "$GITHUB_WORKSPACE/work/out/Image"; then
+            echo "IMAGE 逐字节一致 OK"
+          else
+            echo "IMAGE 不一致 !!"
+          fi
+          echo "---- 解压后 anykernel.sh 是否与仓库一致 ----"
+          cmp anykernel.sh "$GITHUB_WORKSPACE/ak3/anykernel.sh" && echo "anykernel.sh 一致 OK" || echo "anykernel.sh 不一致 !!"
 
       - name: 上传调试日志
         if: always()
