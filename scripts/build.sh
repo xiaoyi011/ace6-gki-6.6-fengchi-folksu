@@ -58,6 +58,10 @@ APPLY_ZRAM="${APPLY_ZRAM:-0}"
 APPLY_NET="${APPLY_NET:-0}"
 # APPLY_BBG=1   : BBG (Baseband-guard) 防格机 LSM, 会往 CONFIG_LSM 追加 baseband_guard
 APPLY_BBG="${APPLY_BBG:-0}"
+# RELAX_VERMAGIC=1 : 通用 GKI —— 放宽 vendor 模块 vermagic 校验 (只比对主版本号前缀
+#                    如 "6.6.118"), 让同一 sun 平台不同机型/固件的模块都能加载。
+#                    符号版本索引与 CONFIG_MODVERSIONS 的 CRC 校验保持不变。
+RELAX_VERMAGIC="${RELAX_VERMAGIC:-0}"
 # APPLY_NET=1 时是否把 BBR 设为默认拥塞控制 (bbr | cubic)
 TCP_DEFAULT_CONG="${TCP_DEFAULT_CONG:-cubic}"
 
@@ -267,6 +271,19 @@ else
 fi
 # 去掉 setlocalversion 末尾的 ${scm_version}, 避免 -dirty/+ 污染 vermagic
 sed -i 's/\${scm_version}//' scripts/setlocalversion
+
+# --------------------- 4b. 通用 GKI: 放宽 vermagic 校验 (可选) -----------------
+# 一加 sun 平台各机型出厂版本串尾部不同 (例如 Ace6/13 = ...-abogki537459655-4k,
+# Pad3 = ...-ab15114928-4k), 严格全等比对会让"一个内核通吃全系"无法实现。
+if [ "$RELAX_VERMAGIC" = "1" ]; then
+  log "通用 GKI: 放宽 vendor 模块 vermagic 校验 (只比对主版本号前缀)"
+  python3 "$REPO_ROOT/scripts/relax_vermagic.py" kernel/module/main.c \
+    || die "放宽 vermagic 失败 (scripts/relax_vermagic.py)"
+  grep -q 'vermagic_compat' kernel/module/main.c || die "放宽 vermagic 未生效"
+  log "已放宽: 主版本号一致即允许加载 (符号 CRC 校验保持不变)"
+else
+  warn "RELAX_VERMAGIC=0 -> 维持严格 vermagic 比对 (只加载版本串完全一致的机型)"
+fi
 
 # --------------------------- 5. SuSFS (默认关闭) -----------------------------
 if [ "$APPLY_SUSFS" = "1" ]; then

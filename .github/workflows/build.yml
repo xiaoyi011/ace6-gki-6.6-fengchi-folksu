@@ -30,6 +30,10 @@ on:
         description: 'BBG (Baseband-guard) 防格机 (往 CONFIG_LSM 追加 baseband_guard)'
         type: boolean
         default: false
+      relax_vermagic:
+        description: '通用GKI: 放宽 vendor 模块 vermagic 校验(只比对主版本号前缀), 让同平台其它机型/固件的模块也能加载'
+        type: boolean
+        default: false
       tcp_default_cong:
         description: '默认拥塞控制 (仅 apply_net=true 时生效; bbr 耗电/发热更高)'
         type: choice
@@ -195,6 +199,7 @@ jobs:
           BUILD_TARGET: ${{ github.event.inputs.build_target }}
           TOOLCHAIN: ${{ github.event.inputs.toolchain }}
           USE_REF_CONFIG: ${{ github.event.inputs.use_ref_config == 'true' && '1' || '0' }}
+          RELAX_VERMAGIC: ${{ github.event.inputs.relax_vermagic == 'true' && '1' || '0' }}
           INSTALL_DEPS: '0'
         run: |
           set -o pipefail
