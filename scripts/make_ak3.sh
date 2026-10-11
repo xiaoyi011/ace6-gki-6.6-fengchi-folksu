@@ -54,6 +54,15 @@ chmod 755 "$WORK/anykernel.sh"
 log "放入内核镜像"
 cp "$IMAGE" "$WORK/Image"
 
+log "写入适用机型说明 (防止刷错机)"
+cat > "$WORK/README-刷机须知.txt" <<'EOF'
+【一加 Ace6 专用内核 (PLQ110 / ossi / SM8750)】
+* 本包仅适用于 一加 Ace 6 (PLQ110)。
+* 其他 6.6 设备/机型严禁刷入: 电源/充电/温控/显示驱动不匹配, 刷入后必现随机重启。
+* 已在本机验证: 风驰调度 / 内置 FolkSU root / TCP 增强 / BBG / BTF。
+* 刷入前务必备份当前 boot_a 分区, 以便随时回滚。
+EOF
+
 # 构建信息只作为独立文件放进 zip (绝不能 append 到 anykernel.sh:
 # 里面的 "BUILT_AT=2026-10-10 15:21:39 UTC" 不是合法 shell 赋值, 会让安装器报错)
 if [ -f "$REPO_ROOT/work/out/build-info.txt" ]; then
