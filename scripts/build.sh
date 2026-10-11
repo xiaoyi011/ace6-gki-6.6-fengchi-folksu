@@ -272,7 +272,8 @@ sed -i 's/\${scm_version}//' scripts/setlocalversion
 if [ "$APPLY_SUSFS" = "1" ]; then
   log "应用 SuSFS 补丁 (实验性)"
   SUSFS_DIR="$WORKDIR/susfs4ksu"
-  [ -d "$SUSFS_DIR" ] || git clone --depth=1 https://github.com/ShirkNeko/susfs4ksu.git "$SUSFS_DIR" || true
+  # 上游把 6.6 补丁从 main 挪到了 gki-android15-6.6 分支 (main 只剩 4.x/5.4)
+  [ -d "$SUSFS_DIR/.git" ] || git clone --depth=1 --branch gki-android15-6.6 https://github.com/ShirkNeko/susfs4ksu.git "$SUSFS_DIR" || true
   P="$SUSFS_DIR/kernel_patches/50_add_susfs_in_gki-android15-6.6.patch"
   if [ -f "$P" ]; then
     cp "$SUSFS_DIR"/kernel_patches/fs/* fs/ 2>/dev/null || true
