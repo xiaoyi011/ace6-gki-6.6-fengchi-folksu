@@ -54,7 +54,7 @@ rm -rf .git
 chmod -R 755 tools 2>/dev/null || true
 
 rm -f "$OUTDIR/$ZIPNAME"
-zip -r9 "$OUTDIR/$ZIPNAME" . -x '.git/*' >/dev/null
+node "$REPO_ROOT/scripts/mkzip.js" "$WORK" "$OUTDIR/$ZIPNAME"
 log "已生成: $OUTDIR/$ZIPNAME ($(du -h "$OUTDIR/$ZIPNAME" | cut -f1))"
 echo "    zip 内容:"
-unzip -l "$OUTDIR/$ZIPNAME" | sed 's/^/      /' | head -25
+node "$REPO_ROOT/scripts/mkzip.js" --list "$OUTDIR/$ZIPNAME" 2>/dev/null || ls -l "$OUTDIR/$ZIPNAME"
