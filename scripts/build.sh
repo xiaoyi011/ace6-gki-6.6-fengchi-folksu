@@ -311,7 +311,9 @@ if [ "$APPLY_BBG" = "1" ]; then
   log "应用 BBG (Baseband-guard) 防格机补丁"
   BBG_SRC="$KERNEL_DIR/Baseband-guard"
   [ -d "$BBG_SRC/.git" ] || git clone --depth=1 https://github.com/vc-teahouse/Baseband-guard.git "$BBG_SRC"
-  ( cd "$KERNEL_DIR" && sh Baseband-guard/setup.sh ) || die "BBG setup.sh 执行失败"
+  # 第 142 行已经把 cwd 切到 KERNEL_DIR(=内核源码根), setup.sh 以 pwd 为 GKI_ROOT,
+  # 不能再 cd 一次 —— 相对路径会二次进入 common/common, 直接报 "security/ not found"
+  sh Baseband-guard/setup.sh || die "BBG setup.sh 执行失败"
   grep -q 'baseband-guard/baseband_guard.o' "$KERNEL_DIR/security/Makefile" \
     || die "BBG: security/Makefile 没被更新"
   echo "    已挂载 security/baseband-guard, security/{Makefile,Kconfig} 已更新"
