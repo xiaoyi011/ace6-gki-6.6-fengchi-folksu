@@ -32,7 +32,9 @@ KERNEL_BRANCH="${KERNEL_BRANCH:-oneplus/sm8750_b_16.0.0_ace_6}"
 KERNEL_DIR="${KERNEL_DIR:-common}"
 
 FOLKSU_REPO="${FOLKSU_REPO:-https://github.com/LyraVoid/FolkSU.git}"
-FOLKSU_TAG="${FOLKSU_TAG:-v0.1.0-beta2}"   # == FolkSU_v0.1.0-beta2_32783-release.apk
+# v0.1.0-beta3: 提交数 2787 -> KSU_VERSION = 30000+2787 = 32787 (与管理器 APK 版本号一致)
+FOLKSU_TAG="${FOLKSU_TAG:-v0.1.0-beta3}"
+KSU_EXPECTED_VERSION="${KSU_EXPECTED_VERSION:-32787}"
 
 APPLY_FENGCHI="${APPLY_FENGCHI:-1}"
 APPLY_SUSFS="${APPLY_SUSFS:-0}"
@@ -179,9 +181,11 @@ grep -q 'drivers/kernelsu/Kconfig' drivers/Kconfig \
   || sed -i '/^endmenu/i source "drivers/kernelsu/Kconfig"' drivers/Kconfig
 
 KSU_UAPI="$(sed -n 's/.*KERNEL_SU_UAPI_VERSION *= *\([0-9]\+\).*/\1/p' KernelSU/uapi/supercall.h | head -1)"
-[ "$KSU_UAPI" = "5" ] || die "FolkSU UAPI=$KSU_UAPI, 与管理器 0.1.0-beta2 (uapi: 5) 不匹配"
+[ "$KSU_UAPI" = "5" ] || die "FolkSU UAPI=$KSU_UAPI, 与管理器 (uapi: 5) 不匹配"
+[ "$KSU_VERSION" = "$KSU_EXPECTED_VERSION" ] \
+  || die "KSU_VERSION=$KSU_VERSION != 期望 $KSU_EXPECTED_VERSION (检查 FOLKSU_TAG 是否与管理器 APK 版本对应)"
 echo "    KERNEL_SU_UAPI_VERSION = $KSU_UAPI"
-echo "    KSU_VERSION = $KSU_VERSION   (管理器 APK 为 32783)"
+echo "    KSU_VERSION = $KSU_VERSION   (管理器 APK 为 $KSU_EXPECTED_VERSION)"
 echo "    受信任管理器证书: size=$KSU_EXPECTED_SIZE sha256=${KSU_EXPECTED_HASH:0:16}..."
 else
   warn "APPLY_KSU=0 -> 内核不带 KernelSU (配合 init_boot 里的 kernelsu.ko LKM root 使用)"

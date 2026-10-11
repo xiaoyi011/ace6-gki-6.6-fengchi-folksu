@@ -22,6 +22,18 @@ on:
         description: '生成 BTF (/sys/kernel/btf/vmlinux)。第三方 scx 调度器(CO-RE)必需, 需要 pahole'
         type: boolean
         default: false
+      kernel_repo:
+        description: '内核源码仓库 (完整厂商树才有原装风驰 HMBIRD)'
+        type: string
+        default: 'https://github.com/schqiushui/android_kernel_common_oneplus_sm8750.git'
+      kernel_branch:
+        description: '内核源码分支 (b_*=公开阉割版只有 sched_ext; v_*=完整厂商树自带 HMBIRD)'
+        type: string
+        default: 'oneplus/sm8750_v_16.0.0_ace_6'
+      ksu_expected_version:
+        description: 'FolkSU KSU_VERSION (须与管理器 APK 版本号一致)'
+        type: string
+        default: '32787'
       localversion:
         description: '内核版本后缀, 需与出厂 vendor_dlkm 的 vermagic 对齐'
         type: string
@@ -109,6 +121,9 @@ jobs:
           APPLY_SUSFS: ${{ github.event.inputs.apply_susfs == 'true' && '1' || '0' }}
           APPLY_KSU: ${{ github.event.inputs.apply_ksu == 'true' && '1' || '0' }}
           ENABLE_BTF: ${{ github.event.inputs.enable_btf == 'true' && '1' || '0' }}
+          KERNEL_REPO: ${{ github.event.inputs.kernel_repo }}
+          KERNEL_BRANCH: ${{ github.event.inputs.kernel_branch }}
+          KSU_EXPECTED_VERSION: ${{ github.event.inputs.ksu_expected_version }}
           LOCALVERSION_SUFFIX: ${{ github.event.inputs.localversion }}
           KSU_EXPECTED_SIZE: ${{ github.event.inputs.ksu_expected_size }}
           KSU_EXPECTED_HASH: ${{ github.event.inputs.ksu_expected_hash }}
