@@ -41,6 +41,11 @@ APPLY_SUSFS="${APPLY_SUSFS:-0}"
 # ksu_config 里 bundled=1, 由 wrapper init / ksuinit 在开机时 insmod)。
 # 内核自带 KSU 时, ksuinit 会走到 "Cannot load kernelsu.ko" 分支 -> init 卡住 -> 卡第一屏。
 APPLY_KSU="${APPLY_KSU:-1}"
+# ENABLE_BTF=1: 生成 BTF (/sys/kernel/btf/vmlinux)。
+# 第三方 sched_ext (scx_rusty / scx_lavd 等 BPF 调度器) 走 CO-RE, 必须要有 BTF;
+# 设备出厂内核就是 DEBUG_INFO_BTF=y + DEBUG_INFO_BTF_MODULES=y + MODULE_ALLOW_BTF_MISMATCH=y。
+# 需要 CI 里装 pahole (apt 包 dwarves)。
+ENABLE_BTF="${ENABLE_BTF:-0}"
 
 # FolkSU 管理器证书的 (长度, SHA-256), 用 scripts/apk_sign.py 从 APK 提取
 KSU_EXPECTED_SIZE="${KSU_EXPECTED_SIZE:-0x2cc}"
@@ -237,6 +242,16 @@ fi
 if [ "$APPLY_SUSFS" != "1" ] && [ "$APPLY_KSU" = "1" ]; then
   echo 'CONFIG_KSU_SUSFS=n' >> arch/arm64/configs/gki_defconfig
 fi
+if [ "$ENABLE_BTF" = "1" ]; then
+  log "启用 BTF (给第三方 scx 调度器用)"
+  command -v pahole >/dev/null 2>&1 || die "ENABLE_BTF=1 但没有 pahole (apt install dwarves)"
+  cat >> arch/arm64/configs/gki_defconfig <<'EOF'
+CONFIG_DEBUG_INFO_BTF=y
+CONFIG_DEBUG_INFO_BTF_MODULES=y
+CONFIG_MODULE_ALLOW_BTF_MISMATCH=y
+EOF
+  pahole --version | sed 's/^/    pahole /'
+fi
 
 # --------------------------- 7. 编译 -----------------------------------------
 log "开始编译 (jobs=$JOBS, clang-$CLANG_VER, target=$BUILD_TARGET)"
@@ -262,6 +277,7 @@ make "${MAKE_ARGS[@]}" gki_defconfig
 if [ "$APPLY_FENGCHI" = "1" ]; then EXT_CFG=CONFIG_HMBIRD_SCHED; else EXT_CFG=CONFIG_SCHED_CLASS_EXT; fi
 CHECKS="CONFIG_KPROBES CONFIG_EXT4_FS $EXT_CFG"
 [ "$APPLY_KSU" = "1" ] && CHECKS="CONFIG_KSU $CHECKS"
+[ "$ENABLE_BTF" = "1" ] && CHECKS="$CHECKS CONFIG_DEBUG_INFO_BTF"
 for c in $CHECKS; do
   grep -q "^${c}=y" out/.config || die "$c 未启用 (内核配置异常)"
   echo "    $c = y"

@@ -18,6 +18,10 @@ on:
         description: '内核内置 KernelSU (false = 配 init_boot 里的 kernelsu.ko LKM 使用)'
         type: boolean
         default: true
+      enable_btf:
+        description: '生成 BTF (/sys/kernel/btf/vmlinux)。第三方 scx 调度器(CO-RE)必需, 需要 pahole'
+        type: boolean
+        default: false
       localversion:
         description: '内核版本后缀, 需与出厂 vendor_dlkm 的 vermagic 对齐'
         type: string
@@ -65,6 +69,7 @@ jobs:
           sudo apt-get install -y --no-install-recommends \
             bc bison flex libelf-dev libssl-dev cpio zip unzip rsync kmod ccache \
             gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu \
+            dwarves \
             python3 git wget curl xz-utils
           wget -q https://apt.llvm.org/llvm.sh -O /tmp/llvm.sh
           chmod +x /tmp/llvm.sh
@@ -103,6 +108,7 @@ jobs:
           APPLY_FENGCHI: ${{ github.event.inputs.apply_fengchi == 'true' && '1' || '0' }}
           APPLY_SUSFS: ${{ github.event.inputs.apply_susfs == 'true' && '1' || '0' }}
           APPLY_KSU: ${{ github.event.inputs.apply_ksu == 'true' && '1' || '0' }}
+          ENABLE_BTF: ${{ github.event.inputs.enable_btf == 'true' && '1' || '0' }}
           LOCALVERSION_SUFFIX: ${{ github.event.inputs.localversion }}
           KSU_EXPECTED_SIZE: ${{ github.event.inputs.ksu_expected_size }}
           KSU_EXPECTED_HASH: ${{ github.event.inputs.ksu_expected_hash }}
