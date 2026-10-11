@@ -78,6 +78,30 @@ function zipDir(srcDir, outFile, prefix){
   fs.writeFileSync(outFile, Buffer.concat([...chunks, cdBuf, eocd]));
   return {count:files.length, size:fs.statSync(outFile).size};
 }
+
+// ---- --list: 列出 zip 内容 (不依赖 unzip 命令) ----
+function listZip(file){
+ const b=fs.readFileSync(file);
+ let eocd=-1;
+ for(let i=b.length-22;i>=0&&i>b.length-70000;i--){ if(b.readUInt32LE(i)===0x06054b50){eocd=i;break;} }
+ if(eocd<0){ console.error('不是有效 zip: '+file); process.exit(1); }
+ const n=b.readUInt16LE(eocd+10), cdOff=b.readUInt32LE(eocd+16), cdSize=b.readUInt32LE(eocd+12);
+ let p=cdOff, total=0, rows=[];
+ while(p<cdOff+cdSize-46){
+  if(b.readUInt32LE(p)!==0x02014b50) break;
+  const usz=b.readUInt32LE(p+24), fnl=b.readUInt16LE(p+28), exl=b.readUInt16LE(p+30), cml=b.readUInt16LE(p+32);
+  const name=b.slice(p+46,p+46+fnl).toString('utf8');
+  p+=46+fnl+exl+cml;
+  total+=usz;
+  rows.push({name,usz});
+ }
+ console.log('  Length      Name');
+ rows.forEach(r=>console.log('  '+String(r.usz).padStart(9)+'   '+r.name));
+ console.log('  ---------');
+ console.log('  '+String(total).padStart(9)+'   ('+rows.length+' 个文件)');
+}
+if(process.argv[2]==='--list'){ listZip(process.argv[3]); process.exit(0); }
+
 const [,,src,out,prefix]=process.argv;
 if(!src||!out){ console.error('用法: node mkzip.js <目录> <输出zip> [前缀]'); process.exit(2); }
 const r=zipDir(src,out,prefix);
