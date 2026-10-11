@@ -36,6 +36,11 @@ FOLKSU_TAG="${FOLKSU_TAG:-v0.1.0-beta2}"   # == FolkSU_v0.1.0-beta2_32783-releas
 
 APPLY_FENGCHI="${APPLY_FENGCHI:-1}"
 APPLY_SUSFS="${APPLY_SUSFS:-0}"
+# APPLY_KSU=0: 内核里【不】集成 KernelSU。
+# 一加 Ace 6 这台机器的 root 是 init_boot ramdisk 里的 kernelsu.ko (LKM 模式,
+# ksu_config 里 bundled=1, 由 wrapper init / ksuinit 在开机时 insmod)。
+# 内核自带 KSU 时, ksuinit 会走到 "Cannot load kernelsu.ko" 分支 -> init 卡住 -> 卡第一屏。
+APPLY_KSU="${APPLY_KSU:-1}"
 
 # FolkSU 管理器证书的 (长度, SHA-256), 用 scripts/apk_sign.py 从 APK 提取
 KSU_EXPECTED_SIZE="${KSU_EXPECTED_SIZE:-0x2cc}"
@@ -140,6 +145,7 @@ else
 fi
 
 # --------------------------- 3. 集成 FolkSU ----------------------------------
+if [ "$APPLY_KSU" = "1" ]; then
 log "集成 FolkSU 内核侧代码 (tag $FOLKSU_TAG)"
 KSU_DIR="$PWD/KernelSU"
 if [ ! -d "$KSU_DIR/.git" ]; then
@@ -172,6 +178,9 @@ KSU_UAPI="$(sed -n 's/.*KERNEL_SU_UAPI_VERSION *= *\([0-9]\+\).*/\1/p' KernelSU/
 echo "    KERNEL_SU_UAPI_VERSION = $KSU_UAPI"
 echo "    KSU_VERSION = $KSU_VERSION   (管理器 APK 为 32783)"
 echo "    受信任管理器证书: size=$KSU_EXPECTED_SIZE sha256=${KSU_EXPECTED_HASH:0:16}..."
+else
+  warn "APPLY_KSU=0 -> 内核不带 KernelSU (配合 init_boot 里的 kernelsu.ko LKM root 使用)"
+fi
 
 # --------------------------- 4. 锁定内核版本后缀 ------------------------------
 log "锁定内核版本后缀: $LOCALVERSION_SUFFIX"
@@ -218,12 +227,14 @@ fi
 # --------------------------- 6. 追加 defconfig -------------------------------
 log "追加 defconfig 配置项"
 cat >> arch/arm64/configs/gki_defconfig <<'EOF'
-CONFIG_KSU=y
 CONFIG_TMPFS_XATTR=y
 CONFIG_TMPFS_POSIX_ACL=y
 CONFIG_CC_OPTIMIZE_FOR_PERFORMANCE=y
 EOF
-if [ "$APPLY_SUSFS" != "1" ]; then
+if [ "$APPLY_KSU" = "1" ]; then
+  echo 'CONFIG_KSU=y' >> arch/arm64/configs/gki_defconfig
+fi
+if [ "$APPLY_SUSFS" != "1" ] && [ "$APPLY_KSU" = "1" ]; then
   echo 'CONFIG_KSU_SUSFS=n' >> arch/arm64/configs/gki_defconfig
 fi
 
@@ -249,7 +260,9 @@ make "${MAKE_ARGS[@]}" gki_defconfig
 
 # 关键配置校验
 if [ "$APPLY_FENGCHI" = "1" ]; then EXT_CFG=CONFIG_HMBIRD_SCHED; else EXT_CFG=CONFIG_SCHED_CLASS_EXT; fi
-for c in CONFIG_KSU CONFIG_KPROBES CONFIG_EXT4_FS "$EXT_CFG"; do
+CHECKS="CONFIG_KPROBES CONFIG_EXT4_FS $EXT_CFG"
+[ "$APPLY_KSU" = "1" ] && CHECKS="CONFIG_KSU $CHECKS"
+for c in $CHECKS; do
   grep -q "^${c}=y" out/.config || die "$c 未启用 (内核配置异常)"
   echo "    $c = y"
 done
