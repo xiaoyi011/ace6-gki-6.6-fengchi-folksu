@@ -75,6 +75,7 @@ function zipDir(srcDir, outFile, prefix){
   eocd.writeUInt32LE(cdBuf.length,12);
   eocd.writeUInt32LE(offset,16);
   eocd.writeUInt16LE(0,20);
+  fs.mkdirSync(path.dirname(outFile),{recursive:true});
   fs.writeFileSync(outFile, Buffer.concat([...chunks, cdBuf, eocd]));
   return {count:files.length, size:fs.statSync(outFile).size};
 }
@@ -104,5 +105,11 @@ if(process.argv[2]==='--list'){ listZip(process.argv[3]); process.exit(0); }
 
 const [,,src,out,prefix]=process.argv;
 if(!src||!out){ console.error('用法: node mkzip.js <目录> <输出zip> [前缀]'); process.exit(2); }
-const r=zipDir(src,out,prefix);
-console.log('✅ 已生成 '+out+'  ('+r.count+' 个文件, '+(r.size/1048576).toFixed(2)+'MB)');
+try{
+  const r=zipDir(src,out,prefix);
+  console.log('✅ 已生成 '+out+'  ('+r.count+' 个文件, '+(r.size/1048576).toFixed(2)+'MB)');
+}catch(e){
+  console.error('❌ 打包失败: '+out);
+  console.error('   '+(e&&e.message?e.message:e));
+  process.exit(1);
+}

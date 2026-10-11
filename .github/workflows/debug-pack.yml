@@ -1,9 +1,8 @@
 name: debug-pack
 
-# 临时调试工作流 (不参与正式构建, 用完删除):
-#   1. 复现 run #7 打包步骤 exit 15 到底出自哪条命令 (bash -x 全量追踪)
-#   2. 直接裸测原生 zip / unzip 在这种负载下的退出码
-#   3. 跑新版 make_ak3.sh(mkzip.js), 并用 Info-ZIP unzip -t 独立校验产物
+# 临时调试工作流 (用完删除)。
+# 目的: 证实 run #7 "打包步骤 exit 15" 的真正原因是相对路径 OUTDIR 在 cd 之后失配,
+#       并验证修复后的 make_ak3.sh 能端到端产出合格 zip。
 on:
   workflow_dispatch:
 
@@ -27,77 +26,74 @@ jobs:
           set -eux
           node --version
           zip -v | head -2
-          unzip -v | head -2
           df -h /
           mkdir -p work/out dist
           head -c 35000000 /dev/urandom > work/out/Image
           ls -lh work/out/Image
           echo "UTS_RELEASE=debug-test" > work/out/build-info.txt
 
-      - name: 旧路径复现 (bash -x, 原生 zip)
+      - name: "A) 根因实验: 输出目录不存在时 zip 的退出码"
         run: |
           set +e
-          git show e452144:scripts/make_ak3.sh > scripts/make_ak3_old.sh
-          bash -x scripts/make_ak3_old.sh work/out/Image dist OLD.zip > /tmp/old.log 2>&1
-          echo "OLD_MAKE_AK3_EXIT=$?"
-          echo "---- 旧路径日志尾部 (看最后一条 + 命令) ----"
-          tail -45 /tmp/old.log
+          rm -rf /tmp/probe && mkdir -p /tmp/probe/src && cd /tmp/probe/src
+          head -c 2000000 /dev/urandom > blob
+          rm -rf /tmp/probe/nodir
+          zip -r9 /tmp/probe/nodir/x.zip . > /tmp/a.log 2>&1
+          echo "A_NO_OUTDIR_ZIP_EXIT=$?"
+          echo "--- zip 的报错 ---"
+          cat /tmp/a.log
+          mkdir -p /tmp/probe/yesdir
+          zip -r9 /tmp/probe/yesdir/x.zip . > /tmp/a2.log 2>&1
+          echo "A2_WITH_OUTDIR_ZIP_EXIT=$?"
 
-      - name: 裸测原生 zip / unzip 退出码
+      - name: "E) 精确复现 run #7 失败点 (cd 到 work/ak3 后用相对 dist/...)"
         run: |
           set +e
-          rm -rf /tmp/ak3raw
-          git clone --depth=1 -q https://github.com/osm0sis/AnyKernel3.git /tmp/ak3raw
-          cd /tmp/ak3raw || exit 1
+          rm -rf /tmp/e
+          mkdir -p /tmp/e
+          git clone --depth=1 -q https://github.com/osm0sis/AnyKernel3.git /tmp/e/ak3
+          cd /tmp/e/ak3 || exit 1
           rm -rf .git
           cp "$GITHUB_WORKSPACE/work/out/Image" Image
-          zip -r9 /tmp/raw.zip . > /tmp/zip.log 2>&1
-          echo "RAW_ZIP_EXIT=$?"
-          cat /tmp/zip.log
-          ls -l /tmp/raw.zip
-          unzip -t /tmp/raw.zip > /tmp/unzipt.log 2>&1
-          echo "RAW_UNZIP_T_EXIT=$?"
-          tail -4 /tmp/unzipt.log
+          rm -rf dist
+          zip -r9 dist/OLD.zip . -x '.git/*' > /tmp/e.log 2>&1
+          echo "E_RELATIVE_OUTDIR_ZIP_EXIT=$?"
+          echo "--- zip 的报错 ---"
+          cat /tmp/e.log
+          ls -l dist/OLD.zip 2>&1
 
-      - name: 新路径 (mkzip.js / Node)
+      - name: "C) mkzip.js 输出目录不存在 (修复后应能自建目录)"
         run: |
           set +e
-          bash -x scripts/make_ak3.sh work/out/Image dist NEW.zip > /tmp/new.log 2>&1
-          echo "NEW_MAKE_AK3_EXIT=$?"
-          echo "---- 新路径日志尾部 ----"
-          tail -35 /tmp/new.log
+          rm -rf /tmp/c_nodir
+          node "$GITHUB_WORKSPACE/scripts/mkzip.js" /tmp/probe/src /tmp/c_nodir/y.zip > /tmp/c.log 2>&1
+          echo "C_MKZIP_NEWDIR_EXIT=$?"
+          cat /tmp/c.log
+          unzip -t /tmp/c_nodir/y.zip 2>&1 | tail -2
 
-      - name: 用 Info-ZIP 独立校验三个产物
+      - name: "D) 修复后的 make_ak3.sh 端到端 (相对 dist 参数)"
+        run: |
+          set +e
+          bash -x scripts/make_ak3.sh work/out/Image dist FIXED.zip > /tmp/d.log 2>&1
+          echo "D_FIXED_MAKE_AK3_EXIT=$?"
+          echo "--- 打包日志尾部 ---"
+          tail -22 /tmp/d.log
+          echo "--- 产物 ---"
+          ls -lh dist/ || true
+          echo "--- unzip -t ---"
+          unzip -t dist/FIXED.zip 2>&1 | tail -2
+
+      - name: "D2) 解压后逐字节校验 Image 与 anykernel.sh"
         if: always()
         run: |
           set +e
           ls -lh "$GITHUB_WORKSPACE/dist/" || true
-          for z in "$GITHUB_WORKSPACE/dist/OLD.zip" "$GITHUB_WORKSPACE/dist/NEW.zip" /tmp/raw.zip; do
-            echo "=========== $z"
-            if [ ! -f "$z" ]; then echo "  (不存在)"; continue; fi
-            ls -l "$z"
-            echo "  -- unzip -t:"
-            unzip -t "$z" 2>&1 | tail -3
-            echo "  -- 条目 (前 12 行):"
-            unzip -l "$z" 2>&1 | head -12
-          done
-
-      - name: 校验解压后 Image 逐字节一致
-        if: always()
-        run: |
-          set +e
-          rm -rf /tmp/x && mkdir -p /tmp/x
-          cd /tmp/x || exit 1
-          unzip -q "$GITHUB_WORKSPACE/dist/NEW.zip"
-          ls -lh
-          sha256sum Image "$GITHUB_WORKSPACE/work/out/Image"
-          if cmp Image "$GITHUB_WORKSPACE/work/out/Image"; then
-            echo "IMAGE 逐字节一致 OK"
-          else
-            echo "IMAGE 不一致 !!"
-          fi
-          echo "---- 解压后 anykernel.sh 是否与仓库一致 ----"
-          cmp anykernel.sh "$GITHUB_WORKSPACE/ak3/anykernel.sh" && echo "anykernel.sh 一致 OK" || echo "anykernel.sh 不一致 !!"
+          rm -rf /tmp/x && mkdir -p /tmp/x && cd /tmp/x || exit 1
+          unzip -q "$GITHUB_WORKSPACE/dist/FIXED.zip"
+          if cmp Image "$GITHUB_WORKSPACE/work/out/Image"; then echo "IMAGE 逐字节一致 OK"; else echo "IMAGE 不一致 !!"; fi
+          if cmp anykernel.sh "$GITHUB_WORKSPACE/ak3/anykernel.sh"; then echo "anykernel.sh 一致 OK"; else echo "anykernel.sh 不一致 !!"; fi
+          echo "--- zip 内容 ---"
+          unzip -l "$GITHUB_WORKSPACE/dist/FIXED.zip" | head -22
 
       - name: 上传调试日志
         if: always()
@@ -105,9 +101,10 @@ jobs:
         with:
           name: debug-pack-log
           path: |
-            /tmp/old.log
-            /tmp/new.log
-            /tmp/zip.log
-            /tmp/unzipt.log
+            /tmp/a.log
+            /tmp/a2.log
+            /tmp/c.log
+            /tmp/d.log
+            /tmp/e.log
           if-no-files-found: ignore
           retention-days: 7

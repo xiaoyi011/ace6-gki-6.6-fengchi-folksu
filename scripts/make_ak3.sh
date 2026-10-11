@@ -13,7 +13,16 @@ OUTDIR="${2:?需要输出目录}"
 ZIPNAME="${3:-Ace6-GKI-6.6-fengchi-FolkSU.zip}"
 
 [ -f "$IMAGE" ] || die "找不到 Image: $IMAGE"
+
+# 关键 (这就是 run #7 打包步骤 exit 15 的真正原因):
+# 本脚本后面会 `cd "$WORK"`, 所以 $IMAGE / $OUTDIR 只要还是相对路径, 就会在 cd 之后
+# 被解析到 $WORK 下面。OUTDIR=dist -> $WORK/dist 不存在 -> zip 无法创建输出文件,
+# 直接退 15 (且不打印任何错误); 换成 Node 写同样会 ENOENT 退 1。
+# 所以这里先把两者都固化成绝对路径。
+IMAGE="$(cd "$(dirname "$IMAGE")" && pwd)/$(basename "$IMAGE")"
 mkdir -p "$OUTDIR"
+OUTDIR="$(cd "$OUTDIR" && pwd)"
+[ -f "$IMAGE" ] || die "找不到 Image: $IMAGE"
 
 WORK="$REPO_ROOT/work/ak3"
 rm -rf "$WORK"
@@ -54,7 +63,20 @@ rm -rf .git
 chmod -R 755 tools 2>/dev/null || true
 
 rm -f "$OUTDIR/$ZIPNAME"
-node "$REPO_ROOT/scripts/mkzip.js" "$WORK" "$OUTDIR/$ZIPNAME"
+# 原生 zip 优先 (已验证在 ubuntu-22.04 runner 上工作正常);
+# 只有在没有 zip 命令时才回退到 Node 实现, 避免依赖缺失导致打包失败。
+if command -v zip >/dev/null 2>&1; then
+  zip -r9 "$OUTDIR/$ZIPNAME" . -x '.git/*' >/dev/null
+else
+  warn "系统里没有 zip 命令, 回退用 scripts/mkzip.js (Node) 打包"
+  node "$REPO_ROOT/scripts/mkzip.js" "$WORK" "$OUTDIR/$ZIPNAME"
+fi
+[ -f "$OUTDIR/$ZIPNAME" ] || die "打包失败: 没有生成 $OUTDIR/$ZIPNAME"
 log "已生成: $OUTDIR/$ZIPNAME ($(du -h "$OUTDIR/$ZIPNAME" | cut -f1))"
 echo "    zip 内容:"
-node "$REPO_ROOT/scripts/mkzip.js" --list "$OUTDIR/$ZIPNAME" 2>/dev/null || ls -l "$OUTDIR/$ZIPNAME"
+if command -v unzip >/dev/null 2>&1; then
+  unzip -l "$OUTDIR/$ZIPNAME" | sed 's/^/      /' | head -25
+  unzip -t "$OUTDIR/$ZIPNAME" | tail -2 | sed 's/^/      /'
+else
+  node "$REPO_ROOT/scripts/mkzip.js" --list "$OUTDIR/$ZIPNAME" 2>/dev/null || ls -l "$OUTDIR/$ZIPNAME"
+fi
