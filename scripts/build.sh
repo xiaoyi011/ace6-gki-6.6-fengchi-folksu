@@ -264,7 +264,8 @@ IMAGE="$PWD/out/arch/arm64/boot/Image"
 log "校验产物"
 UTS="$(strings -a "$IMAGE" | grep -m1 '^Linux version' || true)"
 echo "    $UTS"
-[ -n "$UTS" ] && { echo "$UTS" | grep -q "$LOCALVERSION_SUFFIX" \
+# 注意: 后缀以 '-' 开头, 必须用 -- 终止选项解析, 否则 grep 把它当参数而报错(误报)
+[ -n "$UTS" ] && { echo "$UTS" | grep -q -- "$LOCALVERSION_SUFFIX" \
   || warn "UTS_RELEASE 未包含 $LOCALVERSION_SUFFIX"; }
 for m in hmbird hmbird_sched KernelSU; do
   printf '    标记 %-14s %s 次\n' "$m" "$(grep -a -o "$m" "$IMAGE" | wc -l)"

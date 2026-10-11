@@ -1,0 +1,113 @@
+name: debug-pack
+
+# 临时调试工作流 (不参与正式构建):
+#   1. 复现 run #7 打包步骤的 exit 15 到底出自哪条命令 (bash -x)
+#   2. 直接测原生 zip 在这种负载下的退出码
+#   3. 用 python zipfile + unzip -t 独立校验 mkzip.js 产物是否是真 zip
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: debug-pack-${{ github.run_id }}
+  cancel-in-progress: false
+
+jobs:
+  debug:
+    name: debug packaging
+    runs-on: ubuntu-22.04
+    timeout-minutes: 20
+    steps:
+      - name: 检出 (需要完整历史)
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: 环境与假 Image
+        run: |
+          set -eux
+          node --version
+          zip -v | head -2
+          unzip -v | head -2
+          df -h /
+          mkdir -p work/out dist
+          head -c 35000000 /dev/urandom > work/out/Image
+          ls -lh work/out/Image
+          echo "UTS_RELEASE=debug-test" > work/out/build-info.txt
+
+      - name: 旧路径复现 (bash -x, 原生 zip)
+        run: |
+          set +e
+          git show e452144:scripts/make_ak3.sh > scripts/make_ak3_old.sh
+          bash -x scripts/make_ak3_old.sh work/out/Image dist OLD.zip > /tmp/old.log 2>&1
+          echo "OLD_MAKE_AK3_EXIT=$?"
+          echo "---- 旧路径日志尾部 ----"
+          tail -45 /tmp/old.log
+
+      - name: 裸测原生 zip / unzip 退出码
+        run: |
+          set +e
+          rm -rf /tmp/ak3raw
+          git clone --depth=1 -q https://github.com/osm0sis/AnyKernel3.git /tmp/ak3raw
+          cd /tmp/ak3raw && rm -rf .git && cp /home/runner/work/*/*/work/out/Image Image
+          zip -r9 /tmp/raw.zip . > /tmp/zip.log 2>&1
+          echo "RAW_ZIP_EXIT=$?"
+          cat /tmp/zip.log
+          ls -l /tmp/raw.zip
+          unzip -t /tmp/raw.zip > /tmp/unzipt.log 2>&1
+          echo "UNZIP_T_EXIT=$?"
+          tail -5 /tmp/unzipt.log
+
+      - name: 新路径 (mkzip.js / Node)
+        run: |
+          set +e
+          bash -x scripts/make_ak3.sh work/out/Image dist NEW.zip > /tmp/new.log 2>&1
+          echo "NEW_MAKE_AK3_EXIT=$?"
+          echo "---- 新路径日志尾部 ----"
+          tail -35 /tmp/new.log
+
+      - name: 独立校验 mkzip.js 产物
+        if: always()
+        run: |
+          set +e
+          ls -lh dist/ || true
+          for z in dist/OLD.zip dist/NEW.zip /tmp/raw.zip; do
+            echo "=========== $z"
+            if [ ! -f "$z" ]; then echo "  (不存在)"; continue; fi
+            ls -l "$z"
+            unzip -t "$z" 2>&1 | tail -3
+            python3 -c "
+import zipfile,sys
+f=sys.argv[1]
+try:
+    z=zipfile.ZipFile(f)
+    print('  python zipfile: testzip ->', z.testzip())
+    print('   条目数:', len(z.infolist()))
+    for i in z.infolist()[:12]:
+        print('   ', i.filename, i.file_size, 'method', i.compress_type)
+except Exception as e:
+    print('  python zipfile 打不开:', type(e).__name__, e)
+" "$z"
+          done
+
+      - name: 校验解压后 Image 是否逐字节一致
+        if: always()
+        run: |
+          set +e
+          rm -rf /tmp/x && mkdir -p /tmp/x
+          cd /tmp/x && unzip -q /home/runner/work/*/*/dist/NEW.zip
+          ls -lh
+          sha256sum Image /home/runner/work/*/*/work/out/Image
+          cmp Image /home/runner/work/*/*/work/out/Image && echo "IMAGE 逐字节一致 OK" || echo "IMAGE 不一致 !!"
+
+      - name: 上传调试日志
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: debug-pack-log
+          path: |
+            /tmp/old.log
+            /tmp/new.log
+            /tmp/zip.log
+            /tmp/unzipt.log
+          if-no-files-found: ignore
+          retention-days: 7
