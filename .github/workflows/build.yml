@@ -35,9 +35,14 @@ on:
         type: string
         default: '32787'
       localversion:
-        description: '内核版本后缀, 需与出厂 vendor_dlkm 的 vermagic 对齐'
+        description: '内核版本后缀 (默认对齐出厂内核的完整版本串)'
         type: string
-        default: '-android15-8-o-4k'
+        default: '-android15-8-g9bc34d5b0c79-abogki537459655-4k'
+      toolchain:
+        description: '工具链: android = Android clang r510928 (出厂/参考/社区可用内核均用它); ubuntu = 发行版 clang-18'
+        type: choice
+        options: [android, ubuntu]
+        default: android
       ksu_expected_size:
         description: 'FolkSU 管理器证书长度 (十六进制)'
         type: string
@@ -82,20 +87,43 @@ jobs:
             bc bison flex libelf-dev libssl-dev cpio zip unzip rsync kmod ccache \
             gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu \
             dwarves \
-            python3 git wget curl xz-utils
-          wget -q https://apt.llvm.org/llvm.sh -O /tmp/llvm.sh
-          chmod +x /tmp/llvm.sh
-          sudo /tmp/llvm.sh 18 all
-          # 统一无版本号的工具名, 避免 kbuild 找不到 clang / ld.lld
-          sudo ln -sf "$(command -v clang-18)" /usr/local/bin/clang
-          sudo ln -sf "$(command -v clang++-18)" /usr/local/bin/clang++ 2>/dev/null || true
-          sudo ln -sf "$(command -v ld.lld-18)" /usr/local/bin/ld.lld
-          for t in ar nm objcopy objdump readelf strip ranlib; do
-            if [ -x "/usr/bin/llvm-$t-18" ]; then sudo ln -sf "/usr/bin/llvm-$t-18" "/usr/local/bin/llvm-$t"; fi
-          done
-          clang --version | head -2
-          ld.lld --version | head -1
+            python3 git wget curl xz-utils aria2
+          if [ "${{ github.event.inputs.toolchain }}" = "ubuntu" ]; then
+            wget -q https://apt.llvm.org/llvm.sh -O /tmp/llvm.sh
+            chmod +x /tmp/llvm.sh
+            sudo /tmp/llvm.sh 18 all
+            sudo ln -sf "$(command -v clang-18)" /usr/local/bin/clang
+            sudo ln -sf "$(command -v clang++-18)" /usr/local/bin/clang++ 2>/dev/null || true
+            sudo ln -sf "$(command -v ld.lld-18)" /usr/local/bin/ld.lld
+            for t in ar nm objcopy objdump readelf strip ranlib; do
+              if [ -x "/usr/bin/llvm-$t-18" ]; then sudo ln -sf "/usr/bin/llvm-$t-18" "/usr/local/bin/llvm-$t"; fi
+            done
+          fi
           aarch64-linux-gnu-ld --version | head -1
+
+      - name: 下载 Android clang r510928 工具链
+        if: github.event.inputs.toolchain == 'android'
+        run: |
+          set -eux
+          # 出厂内核/参考内核/cctv18 配方所用工具链: Android clang r510928 (18.0.0)
+          # 依据: 三者 CFI/LTO/hardening 配置与本构建一致, 唯一差别是编译器实现;
+          #       CONFIG_CFI_CLANG=y 时模块间接调用需匹配内核的 KCFI 类型哈希, 编译器必须同源。
+          BASE='https://github.com/cctv18/oneplus_sm8650_toolchain/releases/download/LLVM-Clang18-r510928'
+          mkdir -p "$GITHUB_WORKSPACE/toolchain"
+          cd "$GITHUB_WORKSPACE/toolchain"
+          aria2c -s16 -x16 -k1M "$BASE/clang-r510928.zip" -o clang.zip
+          aria2c -s16 -x16 -k1M "$BASE/build-tools.zip" -o build-tools.zip
+          mkdir -p clang18 build-tools
+          unzip -q clang.zip -d clang18
+          unzip -q build-tools.zip -d build-tools
+          find . -maxdepth 3 -name clang -type f | head -5
+          CLANG_BIN="$(dirname "$(find "$PWD/clang18" -maxdepth 3 -name clang -type f | head -n1)")"
+          BT_BIN="$(find "$PWD/build-tools" -maxdepth 4 -type d -name bin | head -n1)"
+          TOOLCHAIN_BIN="$CLANG_BIN"
+          if [ -n "$BT_BIN" ]; then TOOLCHAIN_BIN="$TOOLCHAIN_BIN:$BT_BIN"; fi
+          echo "TOOLCHAIN_BIN=$TOOLCHAIN_BIN" >> "$GITHUB_ENV"
+          echo "clang bin: $CLANG_BIN  build-tools: ${BT_BIN:-none}"
+          "$CLANG_BIN/clang" --version | head -2
 
       - name: 配置 ccache
         uses: actions/cache@v5
@@ -128,9 +156,14 @@ jobs:
           KSU_EXPECTED_SIZE: ${{ github.event.inputs.ksu_expected_size }}
           KSU_EXPECTED_HASH: ${{ github.event.inputs.ksu_expected_hash }}
           BUILD_TARGET: ${{ github.event.inputs.build_target }}
+          TOOLCHAIN: ${{ github.event.inputs.toolchain }}
           INSTALL_DEPS: '0'
         run: |
           set -o pipefail
+          if [ -n "${TOOLCHAIN_BIN:-}" ]; then
+            export PATH="$TOOLCHAIN_BIN:$PATH"
+            echo ">>> 工具链: $(command -v clang)"; clang --version | head -1
+          fi
           bash scripts/build.sh 2>&1 | tee build.log
           echo "---- ccache 统计 ----"
           ccache -s || true

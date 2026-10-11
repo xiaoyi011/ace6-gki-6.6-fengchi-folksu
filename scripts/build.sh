@@ -53,10 +53,27 @@ ENABLE_BTF="${ENABLE_BTF:-0}"
 KSU_EXPECTED_SIZE="${KSU_EXPECTED_SIZE:-0x2cc}"
 KSU_EXPECTED_HASH="${KSU_EXPECTED_HASH:-2d89b50aaf1db013c2b6738f973f48b62ea21a3a8d7216bfec3521065d448458}"
 
-# 出厂 vendor_dlkm 的 vermagic 为 6.6.118-android15-8-o-4k, 这里逐字对齐
-LOCALVERSION_SUFFIX="${LOCALVERSION_SUFFIX:--android15-8-o-4k}"
+# 出厂内核版本串 = 6.6.118-android15-8-g9bc34d5b0c79-abogki537459655-4k
+#
+# 这里逐字对齐 ROM 的内核版本串(含 -g<sha>-abogki<构建ID>-4k), 理由(硬证据):
+#   1. system_dlkm 全部 96 个 GKI 模块的 vermagic 就是这串(不是 -o-4k)
+#      例: vermagic=6.6.118-android15-8-g9bc34d5b0c79-abogki537459655-4k SMP preempt ...
+#   2. 两个"能在这台机器上启动"的内核都带 abogki537459655:
+#        出厂   : 6.6.118-android15-8-g9bc34d5b0c79-abogki537459655-4k
+#        参考包 : 6.6.150-android15-8-g1826411674e2-abogki537459655-4k (SUBLEVEL/sha 不同也保留了该节)
+#   3. cctv18 的配方也是把 ROM 的确切版本串硬编码进去(并 echo 掉 setlocalversion 的 scm 后缀)
+# 注: vendor_dlkm 里还有 -o-4k / -o-g1524d9b076be-4k 两种旧串, 内核侧的 same_magic() 在
+#     CONFIG_MODVERSIONS 下会忽略版本段, 所以这里取"出厂串"是为了满足 system_dlkm 那一侧。
+LOCALVERSION_SUFFIX="${LOCALVERSION_SUFFIX:--android15-8-g9bc34d5b0c79-abogki537459655-4k}"
 
 CLANG_VER="${CLANG_VER:-18}"
+# 工具链选择:
+#   android = 一加出厂内核/社区可用内核所用的 Android clang r510928 (LLVM=1, 提供 llvm-* 工具)
+#   ubuntu  = 发行版 clang-18 (LLVM=-18, 需要 clang-18/llvm-ar-18 等符号链接)
+# 依据: 出厂内核与"能在这台机器启动"的参考内核都是 Android clang r510928 编译;
+#       cctv18(风驰移植配方)同样下载该预编译包; 两者 CFI/LTO/hardening 配置与本构建完全一致,
+#       唯一差别就是编译器实现 => 先用 Android clang 对齐。
+TOOLCHAIN="${TOOLCHAIN:-android}"
 JOBS="${JOBS:-$(nproc --all)}"
 BUILD_TARGET="${BUILD_TARGET:-Image}"
 INSTALL_DEPS="${INSTALL_DEPS:-0}"
@@ -258,13 +275,11 @@ EOF
 fi
 
 # --------------------------- 7. 编译 -----------------------------------------
-log "开始编译 (jobs=$JOBS, clang-$CLANG_VER, target=$BUILD_TARGET)"
+log "开始编译 (jobs=$JOBS, toolchain=$TOOLCHAIN, target=$BUILD_TARGET)"
 MAKE_ARGS=(
   -j"$JOBS"
-  "LLVM=-$CLANG_VER"
   ARCH=arm64
   CROSS_COMPILE=aarch64-linux-gnu-
-  CROSS_COMPILE_ARM32=arm-linux-gnueabihf-
   CC=clang
   LD=ld.lld
   HOSTCC=clang
@@ -274,6 +289,16 @@ MAKE_ARGS=(
   KSU_EXPECTED_SIZE="$KSU_EXPECTED_SIZE"
   KSU_EXPECTED_HASH="$KSU_EXPECTED_HASH"
 )
+if [ "$TOOLCHAIN" = "android" ]; then
+  # Android clang 预编译包: LLVM=1 让它用包内非版本化的 llvm-* 工具(与 cctv18 配方一致)
+  MAKE_ARGS+=( LLVM=1 )
+  log "工具链: Android clang ($(command -v clang))"
+  clang --version | head -1 | sed 's/^/    /'
+  ld.lld --version 2>/dev/null | head -1 | sed 's/^/    /'
+else
+  MAKE_ARGS+=( "LLVM=-$CLANG_VER" CROSS_COMPILE_ARM32=arm-linux-gnueabihf- )
+  log "工具链: 发行版 clang-$CLANG_VER"
+fi
 
 make "${MAKE_ARGS[@]}" gki_defconfig
 
