@@ -314,7 +314,9 @@ if [ "$APPLY_BBG" = "1" ]; then
   # 而 setup.sh 以 pwd 为 GKI_ROOT, 于是报 "security/ not found" / "cannot open setup.sh"
   [ -d Baseband-guard/.git ] || git clone --depth=1 https://github.com/vc-teahouse/Baseband-guard.git Baseband-guard
   sh Baseband-guard/setup.sh || die "BBG setup.sh 执行失败"
-  grep -q 'baseband-guard/baseband_guard.o' security/Makefile \
+  # setup.sh 实际追加的是 "obj-$(CONFIG_BBG) += baseband-guard/"
+  # (不是 "baseband-guard/baseband_guard.o" —— 那是 setup.sh 自己的幂等判断字符串)
+  grep -q 'baseband-guard/' security/Makefile \
     || die "BBG: security/Makefile 没被更新"
   echo "    已挂载 security/baseband-guard, security/{Makefile,Kconfig} 已更新"
 fi
