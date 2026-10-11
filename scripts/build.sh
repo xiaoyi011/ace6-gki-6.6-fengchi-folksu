@@ -277,9 +277,17 @@ MAKE_ARGS=(
 
 make "${MAKE_ARGS[@]}" gki_defconfig
 
-# 关键配置校验
-if [ "$APPLY_FENGCHI" = "1" ]; then EXT_CFG=CONFIG_HMBIRD_SCHED; else EXT_CFG=CONFIG_SCHED_CLASS_EXT; fi
-CHECKS="CONFIG_KPROBES CONFIG_EXT4_FS $EXT_CFG"
+# 关键配置校验 (调度的判断要"树无关":
+#   公开 b_* 分支是 CONFIG_SCHED_CLASS_EXT, 完整 v_* 厂商树是原装 CONFIG_HMBIRD_SCHED)
+if grep -q '^CONFIG_HMBIRD_SCHED=y' out/.config; then
+  SCHED_CFG=CONFIG_HMBIRD_SCHED
+elif grep -q '^CONFIG_SCHED_CLASS_EXT=y' out/.config; then
+  SCHED_CFG=CONFIG_SCHED_CLASS_EXT
+else
+  die "既没有 CONFIG_HMBIRD_SCHED 也没有 CONFIG_SCHED_CLASS_EXT (调度配置异常)"
+fi
+echo "    调度类 = $SCHED_CFG $( [ "$SCHED_CFG" = CONFIG_HMBIRD_SCHED ] && echo '(风驰 HMBIRD)' || echo '(AOSP sched_ext)' )"
+CHECKS="CONFIG_KPROBES CONFIG_EXT4_FS"
 [ "$APPLY_KSU" = "1" ] && CHECKS="CONFIG_KSU $CHECKS"
 [ "$ENABLE_BTF" = "1" ] && CHECKS="$CHECKS CONFIG_DEBUG_INFO_BTF"
 for c in $CHECKS; do
@@ -303,8 +311,9 @@ echo "    $UTS"
 for m in hmbird hmbird_sched KernelSU; do
   printf '    标记 %-14s %s 次\n' "$m" "$(grep -a -o "$m" "$IMAGE" | wc -l)"
 done
-[ "$APPLY_FENGCHI" = "1" ] && { grep -aq 'hmbird_sched' "$IMAGE" \
-  || warn "内核里没有 hmbird_sched, 风驰可能没编进去"; }
+[ "$SCHED_CFG" = "CONFIG_HMBIRD_SCHED" ] && { grep -aq 'hmbird_sched' "$IMAGE" \
+  || die "配置里 CONFIG_HMBIRD_SCHED=y 但镜像里找不到 hmbird_sched, 风驰没编进去"; \
+  grep -aq 'hmbird_sched' "$IMAGE" && echo "    ✅ 风驰(HMBIRD) 符号确认存在"; }
 
 mkdir -p "$WORKDIR/out"
 cp "$IMAGE" "$WORKDIR/out/Image"
