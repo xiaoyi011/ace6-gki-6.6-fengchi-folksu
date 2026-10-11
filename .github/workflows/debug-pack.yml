@@ -60,9 +60,10 @@ jobs:
           echo "E_RELATIVE_OUTDIR_ZIP_EXIT=$?"
           echo "--- zip 的报错 ---"
           cat /tmp/e.log
-          ls -l dist/OLD.zip 2>&1
+          ls -l dist/OLD.zip 2>&1 || true
 
       - name: "C) mkzip.js 输出目录不存在 (修复后应能自建目录)"
+        if: always()
         run: |
           set +e
           rm -rf /tmp/c_nodir
@@ -72,6 +73,7 @@ jobs:
           unzip -t /tmp/c_nodir/y.zip 2>&1 | tail -2
 
       - name: "D) 修复后的 make_ak3.sh 端到端 (相对 dist 参数)"
+        if: always()
         run: |
           set +e
           bash -x scripts/make_ak3.sh work/out/Image dist FIXED.zip > /tmp/d.log 2>&1
