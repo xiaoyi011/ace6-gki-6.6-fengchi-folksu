@@ -97,9 +97,19 @@ if [ "$INSTALL_DEPS" = "1" ]; then
   fi
 fi
 
-for t in "clang-$CLANG_VER" "ld.lld-$CLANG_VER" aarch64-linux-gnu-ld make bc bison flex git; do
+# 工具检查要跟随 TOOLCHAIN:
+#   android = Android clang r510928 预编译包, 里面全是【非版本号】名字 (clang / ld.lld),
+#             没有 ld.lld-18 -> 之前写死版本名会让 android 模式直接 die
+#   ubuntu  = 发行版 clang-18 + 软链出来的 clang / ld.lld
+if [ "$TOOLCHAIN" = "android" ]; then
+  TOOL_LIST="clang ld.lld llvm-ar llvm-nm aarch64-linux-gnu-ld make bc bison flex git"
+else
+  TOOL_LIST="clang-$CLANG_VER ld.lld-$CLANG_VER clang ld.lld aarch64-linux-gnu-ld make bc bison flex git"
+fi
+for t in $TOOL_LIST; do
   command -v "$t" >/dev/null 2>&1 || die "缺少工具: $t  (设 INSTALL_DEPS=1 或手动安装)"
 done
+echo "    clang: $(command -v clang)"; clang --version | head -1 | sed 's/^/    /'
 
 # --------------------------- 1. 官方 Ace 6 源码 ------------------------------
 cd "$WORKDIR"
@@ -272,6 +282,23 @@ CONFIG_DEBUG_INFO_BTF_MODULES=y
 CONFIG_MODULE_ALLOW_BTF_MISMATCH=y
 EOF
   pahole --version | sed 's/^/    pahole /'
+else
+  # 完整厂商树(v_*)的 gki_defconfig 自带 CONFIG_DEBUG_INFO_BTF=y, 而 ubuntu-22.04 的
+  # apt pahole (dwarves 1.22) 读不了 clang 18 生成的 BTF, 会死在最后一步:
+  #     libbpf: BTF header not found
+  #     pahole: .tmp_vmlinux.btf: Invalid argument
+  #     FAILED: load BTF from vmlinux: Invalid argument
+  # 风驰 HMBIRD 是内置的, 不依赖 BTF; BTF 只在装第三方 scx (CO-RE) 调度器时才需要,
+  # 所以 ENABLE_BTF=0 时必须【显式关掉】, 否则不管用什么工具链都会在链接阶段失败。
+  log "不启用 BTF: 强制关闭厂商树自带的 DEBUG_INFO_BTF"
+  sed -i \
+    -e 's/^CONFIG_DEBUG_INFO_BTF=y/# CONFIG_DEBUG_INFO_BTF is not set/' \
+    -e 's/^CONFIG_DEBUG_INFO_BTF_MODULES=y/# CONFIG_DEBUG_INFO_BTF_MODULES is not set/' \
+    -e 's/^CONFIG_MODULE_ALLOW_BTF_MISMATCH=y/# CONFIG_MODULE_ALLOW_BTF_MISMATCH is not set/' \
+    -e 's/^CONFIG_PAHOLE_VERSION=.*/CONFIG_PAHOLE_VERSION=0/' \
+    arch/arm64/configs/gki_defconfig
+  grep -E '^(# CONFIG_DEBUG_INFO_BTF|# CONFIG_MODULE_ALLOW_BTF_MISMATCH)' arch/arm64/configs/gki_defconfig \
+    | sed 's/^/    /' | sort -u
 fi
 
 # --------------------------- 7. 编译 -----------------------------------------
