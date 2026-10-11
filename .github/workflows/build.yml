@@ -146,22 +146,6 @@ jobs:
           echo "clang bin: $CLANG_BIN  build-tools: ${BT_BIN:-none}"
           "$CLANG_BIN/clang" --version | head -2
 
-      - name: 编译 pahole (dwarves>=1.25)
-        if: github.event.inputs.enable_btf == 'true'
-        run: |
-          set -eux
-          # ubuntu-22.04 的 apt dwarves 是 1.22, 读不了 clang 18 生成的 BTF
-          # (libbpf: BTF header not found / pahole: .tmp_vmlinux.btf: Invalid argument),
-          # 而出厂内核是 CONFIG_PAHOLE_VERSION=125, 所以这里从源码编一个新版。
-          sudo apt-get install -y --no-install-recommends \
-            libelf-dev libzstd-dev zlib1g-dev pkg-config make git
-          git clone --depth=1 https://github.com/evolware/dwarves.git "$RUNNER_TEMP/dwarves"
-          cd "$RUNNER_TEMP/dwarves"
-          make -j"$(nproc --all)"
-          sudo make install
-          hash -r
-          pahole --version
-
       - name: 配置 ccache
         uses: actions/cache@v5
         with:
