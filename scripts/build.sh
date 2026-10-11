@@ -61,6 +61,12 @@ APPLY_BBG="${APPLY_BBG:-0}"
 # APPLY_NET=1 时是否把 BBR 设为默认拥塞控制 (bbr | cubic)
 TCP_DEFAULT_CONG="${TCP_DEFAULT_CONG:-cubic}"
 
+# USE_REF_CONFIG=1 : 不再用树的 gki_defconfig, 直接喂一份【已实测能启动】的完整 .config
+# (configs/ref-6.6.150.config, 来自参考内核运行时 /proc/config.gz)。这样把"配置"这个
+# 变量彻底从对照实验里拿掉: 剩下的差异只有 源码树 / 工具链 / LOCALVERSION 三项。
+USE_REF_CONFIG="${USE_REF_CONFIG:-0}"
+REF_CONFIG_FILE="${REF_CONFIG_FILE:-$REPO_ROOT/configs/ref-6.6.150.config}"
+
 # FolkSU 管理器证书的 (长度, SHA-256), 用 scripts/apk_sign.py 从 APK 提取
 KSU_EXPECTED_SIZE="${KSU_EXPECTED_SIZE:-0x2cc}"
 KSU_EXPECTED_HASH="${KSU_EXPECTED_HASH:-2d89b50aaf1db013c2b6738f973f48b62ea21a3a8d7216bfec3521065d448458}"
@@ -230,13 +236,34 @@ else
   warn "APPLY_KSU=0 -> 内核不带 KernelSU (配合 init_boot 里的 kernelsu.ko LKM root 使用)"
 fi
 
+# --------------------------- 3b. 可选: 套用参考内核配置 ----------------------
+# 所有"往配置里写东西"的地方统一写 $CFGFILE, 它要么是树的 defconfig (默认),
+# 要么是 out/.config (USE_REF_CONFIG=1)。注意顺序: 必须在第 4 节改 LOCALVERSION 之前
+# 把参考配置放进 out/.config, 否则 LOCALVERSION 会被写到没用的地方。
+CFGFILE="arch/arm64/configs/gki_defconfig"
+if [ "$USE_REF_CONFIG" = "1" ]; then
+  [ -f "$REF_CONFIG_FILE" ] || die "USE_REF_CONFIG=1 但找不到 $REF_CONFIG_FILE"
+  log "套用参考内核配置(实测可启动): $REF_CONFIG_FILE"
+  mkdir -p out
+  cp "$REF_CONFIG_FILE" out/.config
+  CFGFILE="out/.config"
+  # abi_symbollist.raw 不在这棵树里的话, TRIM_UNUSED_KSYMS 会直接编译失败
+  if ! find . -maxdepth 4 -name 'abi_symbollist.raw' 2>/dev/null | grep -q .; then
+    log "  本树没有 abi_symbollist.raw -> 关掉 TRIM_UNUSED_KSYMS"
+    sed -i -e 's/^CONFIG_TRIM_UNUSED_KSYMS=y/# CONFIG_TRIM_UNUSED_KSYMS is not set/' \
+           -e '/^CONFIG_UNUSED_KSYMS_WHITELIST=/d' out/.config
+  fi
+  grep -E '^CONFIG_(OF_DTBO_PATCH_CORE|DEBUG_INFO_BTF=|HMBIRD_SCHED|KSU=|TRIM_UNUSED_KSYMS|PSTORE)' out/.config \
+    | sed 's/^/    /' || true
+fi
+
 # --------------------------- 4. 锁定内核版本后缀 ------------------------------
 log "锁定内核版本后缀: $LOCALVERSION_SUFFIX"
-sed -i "s|^CONFIG_LOCALVERSION=.*|CONFIG_LOCALVERSION=\"${LOCALVERSION_SUFFIX}\"|" arch/arm64/configs/gki_defconfig
-if grep -q '^CONFIG_LOCALVERSION_AUTO=' arch/arm64/configs/gki_defconfig; then
-  sed -i 's|^CONFIG_LOCALVERSION_AUTO=.*|CONFIG_LOCALVERSION_AUTO=n|' arch/arm64/configs/gki_defconfig
+sed -i "s|^CONFIG_LOCALVERSION=.*|CONFIG_LOCALVERSION=\"${LOCALVERSION_SUFFIX}\"|" "$CFGFILE"
+if grep -q '^CONFIG_LOCALVERSION_AUTO=' "$CFGFILE"; then
+  sed -i 's|^CONFIG_LOCALVERSION_AUTO=.*|CONFIG_LOCALVERSION_AUTO=n|' "$CFGFILE"
 else
-  echo 'CONFIG_LOCALVERSION_AUTO=n' >> arch/arm64/configs/gki_defconfig
+  echo 'CONFIG_LOCALVERSION_AUTO=n' >> "$CFGFILE"
 fi
 # 去掉 setlocalversion 末尾的 ${scm_version}, 避免 -dirty/+ 污染 vermagic
 sed -i 's/\${scm_version}//' scripts/setlocalversion
@@ -256,7 +283,7 @@ if [ "$APPLY_SUSFS" = "1" ]; then
       ( cd KernelSU && patch -p1 -F3 --no-backup-if-mismatch < "$K" ) \
         || warn "SuSFS 与 FolkSU 的联动补丁冲突 (FolkSU 已重构目录结构)"
     fi
-    cat >> arch/arm64/configs/gki_defconfig <<'EOF'
+    cat >> "$CFGFILE" <<'EOF'
 CONFIG_KSU_SUSFS=y
 CONFIG_KSU_SUSFS_SUS_PATH=y
 CONFIG_KSU_SUSFS_SUS_MOUNT=y
@@ -300,7 +327,7 @@ log "追加 defconfig 配置项"
 # MULTI_COMP 重压缩与 idle writeback 的前提)。运行时可切: cat /sys/block/zram0/comp_algorithm。
 if [ "$APPLY_ZRAM" = "1" ]; then
   log "zram 算法加强 (全后端 + writeback + multi-comp)"
-  cat >> arch/arm64/configs/gki_defconfig <<'EOF'
+  cat >> "$CFGFILE" <<'EOF'
 CONFIG_CRYPTO_LZ4=y
 CONFIG_CRYPTO_LZ4HC=y
 CONFIG_CRYPTO_LZO=y
@@ -322,7 +349,7 @@ fi
 # 再加 netfilter 的 ipset 框架与常用 xt match(均实测存在于本树)。
 if [ "$APPLY_NET" = "1" ]; then
   log "网络/TCP 增强 (BBR+多拥塞控制 + fq 队列 + ipset/xtables 扩展)"
-  cat >> arch/arm64/configs/gki_defconfig <<'EOF'
+  cat >> "$CFGFILE" <<'EOF'
 # 拥塞控制 (6.6 原生)
 CONFIG_TCP_CONG_ADVANCED=y
 CONFIG_TCP_CONG_BBR=y
@@ -348,27 +375,27 @@ CONFIG_NETFILTER_XT_TARGET_LOG=y
 CONFIG_NETFILTER_XT_MATCH_RECENT=y
 EOF
   if [ "$TCP_DEFAULT_CONG" != "cubic" ]; then
-    echo "CONFIG_DEFAULT_TCP_CONG=$TCP_DEFAULT_CONG" >> arch/arm64/configs/gki_defconfig
+    echo "CONFIG_DEFAULT_TCP_CONG=$TCP_DEFAULT_CONG" >> "$CFGFILE"
     log "  默认拥塞控制: $TCP_DEFAULT_CONG (BBR 会增加耗电/发热, 移动网络可能速率波动)"
   else
     log "  默认拥塞控制保持 cubic (只是把 bbr 等编译进去, 运行时可切)"
   fi
 fi
-cat >> arch/arm64/configs/gki_defconfig <<'EOF'
+cat >> "$CFGFILE" <<'EOF'
 CONFIG_TMPFS_XATTR=y
 CONFIG_TMPFS_POSIX_ACL=y
 CONFIG_CC_OPTIMIZE_FOR_PERFORMANCE=y
 EOF
 if [ "$APPLY_KSU" = "1" ]; then
-  echo 'CONFIG_KSU=y' >> arch/arm64/configs/gki_defconfig
+  echo 'CONFIG_KSU=y' >> "$CFGFILE"
 fi
 if [ "$APPLY_SUSFS" != "1" ] && [ "$APPLY_KSU" = "1" ]; then
-  echo 'CONFIG_KSU_SUSFS=n' >> arch/arm64/configs/gki_defconfig
+  echo 'CONFIG_KSU_SUSFS=n' >> "$CFGFILE"
 fi
 if [ "$ENABLE_BTF" = "1" ]; then
   log "启用 BTF (给第三方 scx 调度器用)"
   command -v pahole >/dev/null 2>&1 || die "ENABLE_BTF=1 但没有 pahole (apt install dwarves)"
-  cat >> arch/arm64/configs/gki_defconfig <<'EOF'
+  cat >> "$CFGFILE" <<'EOF'
 CONFIG_DEBUG_INFO_BTF=y
 CONFIG_DEBUG_INFO_BTF_MODULES=y
 CONFIG_MODULE_ALLOW_BTF_MISMATCH=y
@@ -388,8 +415,8 @@ else
     -e 's/^CONFIG_DEBUG_INFO_BTF_MODULES=y/# CONFIG_DEBUG_INFO_BTF_MODULES is not set/' \
     -e 's/^CONFIG_MODULE_ALLOW_BTF_MISMATCH=y/# CONFIG_MODULE_ALLOW_BTF_MISMATCH is not set/' \
     -e 's/^CONFIG_PAHOLE_VERSION=.*/CONFIG_PAHOLE_VERSION=0/' \
-    arch/arm64/configs/gki_defconfig
-  grep -E '^(# CONFIG_DEBUG_INFO_BTF|# CONFIG_MODULE_ALLOW_BTF_MISMATCH)' arch/arm64/configs/gki_defconfig \
+    "$CFGFILE"
+  grep -E '^(# CONFIG_DEBUG_INFO_BTF|# CONFIG_MODULE_ALLOW_BTF_MISMATCH)' "$CFGFILE" \
     | sed 's/^/    /' | sort -u
 fi
 
@@ -419,7 +446,12 @@ else
   log "工具链: 发行版 clang-$CLANG_VER"
 fi
 
-make "${MAKE_ARGS[@]}" gki_defconfig
+if [ "$USE_REF_CONFIG" = "1" ]; then
+  log "==> make olddefconfig (基于参考内核完整 .config)"
+  make "${MAKE_ARGS[@]}" olddefconfig
+else
+  make "${MAKE_ARGS[@]}" gki_defconfig
+fi
 
 # BBG 的 CONFIG_BBG + LSM 列表必须在 defconfig 之后用 scripts/config 改:
 # CONFIG_LSM 是字符串选项, 只能"追加"不能覆盖 —— 覆盖会顺手关掉 landlock/lockdown/
