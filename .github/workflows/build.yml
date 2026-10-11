@@ -26,6 +26,10 @@ on:
         description: '网络/TCP 增强 (BBR 等拥塞控制 + fq 队列 + ipset/xtables 扩展)'
         type: boolean
         default: false
+      apply_bbg:
+        description: 'BBG (Baseband-guard) 防格机 (往 CONFIG_LSM 追加 baseband_guard)'
+        type: boolean
+        default: false
       tcp_default_cong:
         description: '默认拥塞控制 (仅 apply_net=true 时生效; bbr 耗电/发热更高)'
         type: choice
@@ -163,6 +167,7 @@ jobs:
           APPLY_KSU: ${{ github.event.inputs.apply_ksu == 'true' && '1' || '0' }}
           APPLY_ZRAM: ${{ github.event.inputs.apply_zram == 'true' && '1' || '0' }}
           APPLY_NET: ${{ github.event.inputs.apply_net == 'true' && '1' || '0' }}
+          APPLY_BBG: ${{ github.event.inputs.apply_bbg == 'true' && '1' || '0' }}
           TCP_DEFAULT_CONG: ${{ github.event.inputs.tcp_default_cong }}
           ENABLE_BTF: ${{ github.event.inputs.enable_btf == 'true' && '1' || '0' }}
           KERNEL_REPO: ${{ github.event.inputs.kernel_repo }}

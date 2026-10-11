@@ -56,6 +56,8 @@ ENABLE_BTF="${ENABLE_BTF:-0}"
 #                 见 repo/patches/ 与 scripts 里的独立开关, 不在这里混进来。
 APPLY_ZRAM="${APPLY_ZRAM:-0}"
 APPLY_NET="${APPLY_NET:-0}"
+# APPLY_BBG=1   : BBG (Baseband-guard) 防格机 LSM, 会往 CONFIG_LSM 追加 baseband_guard
+APPLY_BBG="${APPLY_BBG:-0}"
 # APPLY_NET=1 时是否把 BBR 设为默认拥塞控制 (bbr | cubic)
 TCP_DEFAULT_CONG="${TCP_DEFAULT_CONG:-cubic}"
 
@@ -270,6 +272,24 @@ EOF
   fi
 fi
 
+# ---- BBG (Baseband-guard) 防格机 ----
+# 集成方式 (来自上游 setup.sh 的实际逻辑, 已核对):
+#   * setup.sh 以 pwd 为 GKI_ROOT 定位内核根目录, 必须在 KERNEL_DIR 下执行
+#   * 它自己管 clone: 目录已存在就 fetch + checkout main
+#   * 6.6 有现代 LSM (include/linux/lsm_hooks.h 里的 DEFINE_LSM(lsm)),
+#     所以走"标准 LSM blob 管理"分支, 不会去改 selinux (老内核才需要 sepatch.txt)
+#   * 它只挂源码 (security/baseband-guard 符号链接 + security/{Makefile,Kconfig}),
+#     CONFIG_BBG 和 LSM 列表要我们自己加 -> 见 defconfig 之后的 .config 改造
+if [ "$APPLY_BBG" = "1" ]; then
+  log "应用 BBG (Baseband-guard) 防格机补丁"
+  BBG_SRC="$KERNEL_DIR/Baseband-guard"
+  [ -d "$BBG_SRC/.git" ] || git clone --depth=1 https://github.com/vc-teahouse/Baseband-guard.git "$BBG_SRC"
+  ( cd "$KERNEL_DIR" && sh Baseband-guard/setup.sh ) || die "BBG setup.sh 执行失败"
+  grep -q 'baseband-guard/baseband_guard.o' "$KERNEL_DIR/security/Makefile" \
+    || die "BBG: security/Makefile 没被更新"
+  echo "    已挂载 security/baseband-guard, security/{Makefile,Kconfig} 已更新"
+fi
+
 # --------------------------- 6. 追加 defconfig -------------------------------
 log "追加 defconfig 配置项"
 
@@ -400,6 +420,26 @@ else
 fi
 
 make "${MAKE_ARGS[@]}" gki_defconfig
+
+# BBG 的 CONFIG_BBG + LSM 列表必须在 defconfig 之后用 scripts/config 改:
+# CONFIG_LSM 是字符串选项, 只能"追加"不能覆盖 —— 覆盖会顺手关掉 landlock/lockdown/
+# integrity/bpf 等已有的 LSM, 属于静默破坏。
+if [ "$APPLY_BBG" = "1" ]; then
+  log "配置 BBG (CONFIG_BBG=y + LSM 追加 baseband_guard)"
+  scripts/config --file out/.config --enable BBG
+  LSM_NOW="$(sed -n 's/^CONFIG_LSM="\(.*\)"$/\1/p' out/.config | head -1)"
+  if [ -z "$LSM_NOW" ]; then
+    scripts/config --file out/.config --set-str LSM baseband_guard
+    echo "    CONFIG_LSM 原本为空 -> 仅 baseband_guard (注意: 会没有其他 LSM)"
+  elif [ "${LSM_NOW#*,baseband_guard}" != "$LSM_NOW" ] || [ "${LSM_NOW%,baseband_guard}" != "$LSM_NOW" ] || [ "$LSM_NOW" = "baseband_guard" ]; then
+    echo "    CONFIG_LSM 已含 baseband_guard, 跳过追加"
+  else
+    scripts/config --file out/.config --set-str LSM "${LSM_NOW},baseband_guard"
+    echo "    CONFIG_LSM: $LSM_NOW -> ${LSM_NOW},baseband_guard"
+  fi
+  grep -E '^(CONFIG_BBG|CONFIG_LSM)=' out/.config | sed 's/^/    /'
+  grep -q '^CONFIG_BBG=y' out/.config || die "CONFIG_BBG 没被打开 (检查 security/baseband-guard/Kconfig)"
+fi
 
 # 关键配置校验 (调度的判断要"树无关":
 #   公开 b_* 分支是 CONFIG_SCHED_CLASS_EXT, 完整 v_* 厂商树是原装 CONFIG_HMBIRD_SCHED)
