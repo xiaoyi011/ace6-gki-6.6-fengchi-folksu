@@ -47,6 +47,18 @@ on:
         description: '内核源码分支 (b_*=公开阉割版只有 sched_ext; v_*=完整厂商树自带 HMBIRD)'
         type: string
         default: 'oneplus/sm8750_v_16.0.0_ace_6'
+      device_tag:
+        description: '机型短标识(产物/zip命名用, 如 ace6/op13/pad3)'
+        type: string
+        default: 'ace6'
+      device_name:
+        description: '机型显示名(安装界面/README 用)'
+        type: string
+        default: '一加 Ace 6'
+      device_ids:
+        description: '机型 ID(仅限提示用, 如 PLQ110/ossi/SM8750)'
+        type: string
+        default: 'PLQ110/ossi/SM8750'
       ksu_expected_version:
         description: 'FolkSU KSU_VERSION (须与管理器 APK 版本号一致)'
         type: string
@@ -194,11 +206,10 @@ jobs:
           echo "---- ccache 统计 ----"
           ccache -s || true
 
-      - name: 打包 AnyKernel3 刷机包
+      - name: 收集内核 Image
+        id: collect_img
         run: |
           set -eux
-          SUFFIX="${{ github.event.inputs.localversion }}"
-          # Image 在 out/arch/arm64/boot/ 下, 不在 out/ 根目录
           IMG="$(find work/out -type f -path '*arch/arm64/boot*' -name Image 2>/dev/null | head -n1)"
           [ -n "$IMG" ] || IMG="$(find work -type f -name Image 2>/dev/null | head -n1)"
           if [ -z "$IMG" ]; then
@@ -209,7 +220,28 @@ jobs:
           echo ">>> 使用 Image: $IMG"; ls -lh "$IMG"
           HB="$(strings "$IMG" 2>/dev/null | grep -c -i hmbird || true)"
           echo ">>> 风驰(hmbird) 符号命中: $HB"
-          bash scripts/make_ak3.sh "$IMG" dist "Ace6-GKI-6.6-fengchi-FolkSU${SUFFIX}.zip"
+          mkdir -p dist
+          cp "$IMG" "dist/Image-${{ github.event.inputs.device_tag }}"
+          echo "img_path=$IMG" >> "$GITHUB_OUTPUT"
+
+      - name: 上传内核 Image (原始产物, 打包失败也不丢)
+        uses: actions/upload-artifact@v7
+        with:
+          name: Image-${{ github.event.inputs.device_tag }}-${{ github.run_number }}
+          path: dist/Image-*
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: 打包 AnyKernel3 刷机包
+        run: |
+          set -eux
+          SUFFIX="${{ github.event.inputs.localversion }}"
+          IMG="${{ steps.collect_img.outputs.img_path }}"
+          DEV_TAG="${{ github.event.inputs.device_tag }}"
+          export DEV_NAME="${{ github.event.inputs.device_name }}"
+          export DEV_IDS="${{ github.event.inputs.device_ids }}"
+          bash scripts/make_ak3.sh "$IMG" dist "Ace6-GKI-6.6-fengchi-FolkSU-${DEV_TAG}${SUFFIX}.zip" \
+            || { echo "!! AK3 打包失败(原始 Image 已另传, 不影响内核产物)"; exit 0; }
           ls -lh dist/
 
       - name: 上传日志
@@ -228,5 +260,5 @@ jobs:
         with:
           name: Ace6-GKI-6.6-fengchi-FolkSU-${{ github.run_number }}
           path: dist/*.zip
-          if-no-files-found: error
+          if-no-files-found: ignore
           retention-days: 30

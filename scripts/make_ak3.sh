@@ -47,19 +47,21 @@ for R in https://github.com/osm0sis/AnyKernel3.git \
 done
 [ "$AK3_OK" = "1" ] || die "无法获取可用的 AnyKernel3 骨架"
 
-log "写入 Ace 6 专用 anykernel.sh"
+log "写入机型专用 anykernel.sh"
 cp "$REPO_ROOT/ak3/anykernel.sh" "$WORK/anykernel.sh"
+# 按机型替换占位符 (sed 用 | 作分隔符 —— DEV_IDS 里含 '/' 不会破坏替换)
+sed -i "s|@DEV_NAME@|${DEV_NAME:-一加 Ace 6}|g; s|@DEV_IDS@|${DEV_IDS:-PLQ110/ossi/SM8750}|g" "$WORK/anykernel.sh"
 chmod 755 "$WORK/anykernel.sh"
 
 log "放入内核镜像"
 cp "$IMAGE" "$WORK/Image"
 
 log "写入适用机型说明 (防止刷错机)"
-cat > "$WORK/README-刷机须知.txt" <<'EOF'
-【一加 Ace6 专用内核 (PLQ110 / ossi / SM8750)】
-* 本包仅适用于 一加 Ace 6 (PLQ110)。
+cat > "$WORK/README-刷机须知.txt" <<EOF
+【${DEV_NAME:-一加 Ace 6} 专用内核 (${DEV_IDS:-PLQ110/ossi/SM8750})】
+* 本包仅适用于 ${DEV_NAME:-一加 Ace 6} (${DEV_IDS:-PLQ110/ossi/SM8750})。
 * 其他 6.6 设备/机型严禁刷入: 电源/充电/温控/显示驱动不匹配, 刷入后必现随机重启。
-* 已在本机验证: 风驰调度 / 内置 FolkSU root / TCP 增强 / BBG / BTF。
+* 已实测验证: 风驰调度 / 内置 FolkSU root / TCP 增强 / BBG / BTF。
 * 刷入前务必备份当前 boot_a 分区, 以便随时回滚。
 EOF
 
