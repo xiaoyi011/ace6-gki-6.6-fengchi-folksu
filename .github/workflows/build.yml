@@ -18,6 +18,19 @@ on:
         description: '内核内置 KernelSU (false = 配 init_boot 里的 kernelsu.ko LKM 使用)'
         type: boolean
         default: true
+      apply_zram:
+        description: 'zram 算法加强 (lz4/lz4hc/zstd/lzo/842 全后端 + writeback + multi-comp)'
+        type: boolean
+        default: false
+      apply_net:
+        description: '网络/TCP 增强 (BBR 等拥塞控制 + fq 队列 + ipset/xtables 扩展)'
+        type: boolean
+        default: false
+      tcp_default_cong:
+        description: '默认拥塞控制 (仅 apply_net=true 时生效; bbr 耗电/发热更高)'
+        type: choice
+        options: [cubic, bbr]
+        default: cubic
       enable_btf:
         description: '生成 BTF (/sys/kernel/btf/vmlinux)。第三方 scx 调度器(CO-RE)必需, 需要 pahole'
         type: boolean
@@ -148,6 +161,9 @@ jobs:
           APPLY_FENGCHI: ${{ github.event.inputs.apply_fengchi == 'true' && '1' || '0' }}
           APPLY_SUSFS: ${{ github.event.inputs.apply_susfs == 'true' && '1' || '0' }}
           APPLY_KSU: ${{ github.event.inputs.apply_ksu == 'true' && '1' || '0' }}
+          APPLY_ZRAM: ${{ github.event.inputs.apply_zram == 'true' && '1' || '0' }}
+          APPLY_NET: ${{ github.event.inputs.apply_net == 'true' && '1' || '0' }}
+          TCP_DEFAULT_CONG: ${{ github.event.inputs.tcp_default_cong }}
           ENABLE_BTF: ${{ github.event.inputs.enable_btf == 'true' && '1' || '0' }}
           KERNEL_REPO: ${{ github.event.inputs.kernel_repo }}
           KERNEL_BRANCH: ${{ github.event.inputs.kernel_branch }}

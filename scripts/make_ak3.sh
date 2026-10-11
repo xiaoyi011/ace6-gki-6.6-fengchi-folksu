@@ -11,6 +11,9 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 IMAGE="${1:?需要 Image 路径}"
 OUTDIR="${2:?需要输出目录}"
 ZIPNAME="${3:-Ace6-GKI-6.6-fengchi-FolkSU.zip}"
+# 第 4 个参数: 用哪个 anykernel.sh (默认 ak3/anykernel.sh;
+# 给社区参考内核打包时用 ak3/anykernel-ref.sh, 它会如实写明 root 是内置 SukiSU)
+AK3_SCRIPT="${4:-anykernel.sh}"
 
 [ -f "$IMAGE" ] || die "找不到 Image: $IMAGE"
 

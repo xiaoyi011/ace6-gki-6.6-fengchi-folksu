@@ -49,6 +49,16 @@ APPLY_KSU="${APPLY_KSU:-1}"
 # 需要 CI 里装 pahole (apt 包 dwarves)。
 ENABLE_BTF="${ENABLE_BTF:-0}"
 
+# ---- 可选增强 (默认全关, 先确保内核能启动再逐项开) ----
+# APPLY_ZRAM=1   : zram 全压缩后端 + writeback + multi-comp (原生符号, 无源码补丁)
+# APPLY_NET=1    : BBR 等拥塞控制 + fq/fq_codel 队列调度 + netfilter/ipset 扩展 (原生符号)
+#                 不含 BRUTAL / BPF_STREAM_PARSER / LZ4KD —— 那三个必须打源码补丁,
+#                 见 repo/patches/ 与 scripts 里的独立开关, 不在这里混进来。
+APPLY_ZRAM="${APPLY_ZRAM:-0}"
+APPLY_NET="${APPLY_NET:-0}"
+# APPLY_NET=1 时是否把 BBR 设为默认拥塞控制 (bbr | cubic)
+TCP_DEFAULT_CONG="${TCP_DEFAULT_CONG:-cubic}"
+
 # FolkSU 管理器证书的 (长度, SHA-256), 用 scripts/apk_sign.py 从 APK 提取
 KSU_EXPECTED_SIZE="${KSU_EXPECTED_SIZE:-0x2cc}"
 KSU_EXPECTED_HASH="${KSU_EXPECTED_HASH:-2d89b50aaf1db013c2b6738f973f48b62ea21a3a8d7216bfec3521065d448458}"
@@ -262,6 +272,68 @@ fi
 
 # --------------------------- 6. 追加 defconfig -------------------------------
 log "追加 defconfig 配置项"
+
+# ---- zram 压缩算法加强 (仅原生符号, 不打任何源码补丁) ----
+# 出厂内核现状: ZRAM=m, 默认 lzo-rle, 只有 LZO/ZSTD/LZ4。
+# 这里把 LZ4/LZ4HC/LZO/842/ZSTD 五种后端全开(lz4/lz4hc 在同一条 choice 里只能选一个做默认,
+# 所以默认给 lz4 —— 比 lzo-rle 快), 并开 WRITEBAOK + MULTI_COMP + ACTIME(ACTIME 是
+# MULTI_COMP 重压缩与 idle writeback 的前提)。运行时可切: cat /sys/block/zram0/comp_algorithm。
+if [ "$APPLY_ZRAM" = "1" ]; then
+  log "zram 算法加强 (全后端 + writeback + multi-comp)"
+  cat >> arch/arm64/configs/gki_defconfig <<'EOF'
+CONFIG_CRYPTO_LZ4=y
+CONFIG_CRYPTO_LZ4HC=y
+CONFIG_CRYPTO_LZO=y
+CONFIG_CRYPTO_842=y
+CONFIG_CRYPTO_ZSTD=y
+CONFIG_ZRAM_DEF_COMP_LZ4=y
+CONFIG_ZRAM_WRITEBACK=y
+CONFIG_ZRAM_TRACK_ENTRY_ACTIME=y
+CONFIG_ZRAM_MULTI_COMP=y
+CONFIG_ZSMALLOC=y
+EOF
+  log "  运行时可在 /sys/block/zram0/comp_algorithm 切换 lz4/lz4hc/zstd/lzo/842"
+fi
+
+# ---- 网络/TCP 增强 (仅原生符号) ----
+# 出厂内核: DEFAULT_TCP_CONG="cubic", 只有 CUBIC/BBR, NETFILTER_XT_MATCH_ADDRTYPE=n。
+# 这里: 补齐 6 种原生拥塞控制(BBR/Cubic/Vegas/NewVegas/Westwood/HTCP, 全部实测存在
+# 于 net/ipv4/Kconfig), 把 FQ/FQ_CODEL(与 BBR 配套)/CAKE/HTB 队列调度打开,
+# 再加 netfilter 的 ipset 框架与常用 xt match(均实测存在于本树)。
+if [ "$APPLY_NET" = "1" ]; then
+  log "网络/TCP 增强 (BBR+多拥塞控制 + fq 队列 + ipset/xtables 扩展)"
+  cat >> arch/arm64/configs/gki_defconfig <<'EOF'
+# 拥塞控制 (6.6 原生)
+CONFIG_TCP_CONG_ADVANCED=y
+CONFIG_TCP_CONG_BBR=y
+CONFIG_TCP_CONG_CUBIC=y
+CONFIG_TCP_CONG_VEGAS=y
+CONFIG_TCP_CONG_NV=y
+CONFIG_TCP_CONG_WESTWOOD=y
+CONFIG_TCP_CONG_HTCP=y
+# 队列调度 (BBR 需要 fq 才完整生效)
+CONFIG_NET_SCH_FQ=y
+CONFIG_NET_SCH_FQ_CODEL=y
+CONFIG_NET_SCH_CAKE=y
+CONFIG_NET_SCH_HTB=y
+# netfilter: ipset 框架 + 常用 xt match
+CONFIG_IP_SET=y
+CONFIG_IP_SET_BITMAP_IP=y
+CONFIG_IP_SET_HASH_IP=y
+CONFIG_IP_SET_HASH_NET=y
+CONFIG_IP_SET_HASH_NETPORT=y
+CONFIG_NETFILTER_XT_MATCH_ADDRTYPE=y
+CONFIG_NETFILTER_XT_SET=y
+CONFIG_NETFILTER_XT_TARGET_LOG=y
+CONFIG_NETFILTER_XT_MATCH_RECENT=y
+EOF
+  if [ "$TCP_DEFAULT_CONG" != "cubic" ]; then
+    echo "CONFIG_DEFAULT_TCP_CONG=$TCP_DEFAULT_CONG" >> arch/arm64/configs/gki_defconfig
+    log "  默认拥塞控制: $TCP_DEFAULT_CONG (BBR 会增加耗电/发热, 移动网络可能速率波动)"
+  else
+    log "  默认拥塞控制保持 cubic (只是把 bbr 等编译进去, 运行时可切)"
+  fi
+fi
 cat >> arch/arm64/configs/gki_defconfig <<'EOF'
 CONFIG_TMPFS_XATTR=y
 CONFIG_TMPFS_POSIX_ACL=y
