@@ -309,12 +309,12 @@ fi
 #     CONFIG_BBG 和 LSM 列表要我们自己加 -> 见 defconfig 之后的 .config 改造
 if [ "$APPLY_BBG" = "1" ]; then
   log "应用 BBG (Baseband-guard) 防格机补丁"
-  BBG_SRC="$KERNEL_DIR/Baseband-guard"
-  [ -d "$BBG_SRC/.git" ] || git clone --depth=1 https://github.com/vc-teahouse/Baseband-guard.git "$BBG_SRC"
-  # 第 142 行已经把 cwd 切到 KERNEL_DIR(=内核源码根), setup.sh 以 pwd 为 GKI_ROOT,
-  # 不能再 cd 一次 —— 相对路径会二次进入 common/common, 直接报 "security/ not found"
+  # 第 142 行已把 cwd 切到源码根 (KERNEL_DIR), 这里必须全部用相对路径:
+  # 写成 "$KERNEL_DIR/Baseband-guard" 会在 common/ 里再套一层, 变成 common/common/Baseband-guard,
+  # 而 setup.sh 以 pwd 为 GKI_ROOT, 于是报 "security/ not found" / "cannot open setup.sh"
+  [ -d Baseband-guard/.git ] || git clone --depth=1 https://github.com/vc-teahouse/Baseband-guard.git Baseband-guard
   sh Baseband-guard/setup.sh || die "BBG setup.sh 执行失败"
-  grep -q 'baseband-guard/baseband_guard.o' "$KERNEL_DIR/security/Makefile" \
+  grep -q 'baseband-guard/baseband_guard.o' security/Makefile \
     || die "BBG: security/Makefile 没被更新"
   echo "    已挂载 security/baseband-guard, security/{Makefile,Kconfig} 已更新"
 fi
