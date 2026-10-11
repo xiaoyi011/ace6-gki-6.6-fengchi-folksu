@@ -276,7 +276,8 @@ done
 mkdir -p "$WORKDIR/out"
 cp "$IMAGE" "$WORKDIR/out/Image"
 {
-  echo "UTS_RELEASE=$(cat include/config/kernel.release 2>/dev/null || echo unknown)"
+  # 注意: 内核是带 O=out 编的, kernel.release 在 out/include/config/ 下
+  echo "UTS_RELEASE=$(cat out/include/config/kernel.release 2>/dev/null || cat include/config/kernel.release 2>/dev/null || echo unknown)"
   echo "KERNEL_REPO=$KERNEL_REPO"
   echo "KERNEL_BRANCH=$KERNEL_BRANCH"
   echo "KERNEL_SOURCE_HEAD=$SRC_HEAD"
