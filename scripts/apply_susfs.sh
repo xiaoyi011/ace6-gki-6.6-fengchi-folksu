@@ -57,16 +57,25 @@ cp "$KP/include/linux/susfs_def.h" include/linux/susfs_def.h || die "拷贝 susf
 [ -s fs/susfs.c ] || die "fs/susfs.c 为空"
 
 # ------------------------------------------------------------ 2. 内核侧补丁
-log "2/6 应用内核侧补丁 (要求零 fuzz)"
-DRY="$(patch -p1 -F0 --dry-run -i "$P50" 2>&1)" || true
-if echo "$DRY" | grep -qiE 'FAILED|Hunk'; then
-  echo "$DRY" | grep -iE 'FAILED|Hunk' | sed 's/^/    /'
-  die "内核侧补丁不再零 fuzz (源码树被改动?), 需重基"
+log "2/6 应用内核侧补丁"
+# 两个坑 (都是实测踩到的):
+#   1) toybox patch 的 --dry-run **仍会改文件**, 所以不能拿它当"纯预检";
+#   2) 风驰补丁已给树带来 +3 行左右的漂移, 用 -F0 会误判, 必须留 fuzz。
+# 因此: 直接以 -F3 正式应用, 然后靠 "FAILED / .rej / 关键产物" 三重校验兜底。
+PATCH_OUT="$(patch -p1 -F3 --no-backup-if-mismatch -i "$P50" 2>&1)" || true
+echo "$PATCH_OUT" | grep -iE 'succeeded at .*offset' | sed 's/^/    /' || true
+if echo "$PATCH_OUT" | grep -qiE 'FAILED'; then
+  echo "$PATCH_OUT" | grep -iE 'FAILED' | sed 's/^/    /'
+  die "内核侧补丁有 hunk 失败, 需重基"
 fi
-patch -p1 -F0 --no-backup-if-mismatch -i "$P50" >/dev/null || die "内核侧补丁应用失败"
 REJ="$(find . -name '*.rej' -not -path './.git/*' | wc -l)"
 [ "$REJ" = "0" ] || { find . -name '*.rej' | sed 's/^/    /'; die "有 $REJ 个 .rej"; }
-grep -q 'susfs.o' fs/Makefile || die "fs/Makefile 未挂入 susfs.o"
+# 关键产物校验: 确认补丁真的落到了它应该落的地方。
+# 注意: C 代码里写的是 <linux/susfs_def.h>, 点号在 '>' 之前,
+# 所以子串必须写成 "susfs_def.h>" —— 写成 "susfs_def.h" 永远匹配不到。
+grep -q 'susfs.o' fs/Makefile                    || die "fs/Makefile 未挂入 susfs.o (补丁没生效?)"
+grep -q 'ksu_is_input_hook_enabled' drivers/input/input.c || die "drivers/input/input.c 未打上输入钩子"
+grep -q 'ksu_handle_sys_reboot' kernel/reboot.c  || die "kernel/reboot.c 未打上 SUSFS 分派"
 log "    已应用, 0 reject"
 
 # ------------------------------------------------------- 3. FinaSU 侧改动
