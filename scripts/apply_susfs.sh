@@ -125,21 +125,55 @@ if grep -qE '^[[:space:]]*ksu_su_compat_enabled[[:space:]]*=' "$SC"; then
   die "$SC: 仍有对静态键的直接赋值 (静态键不可赋值)"
 fi
 grep -q 'static_branch_enable(&ksu_su_compat_enabled)' "$SC" || die "$SC: 未找到 static_branch_enable"
-include_static_key "$SC"
-log "    ksu_su_compat_enabled -> static_key_true (含运行时开关改写)"
 
-# 3c. ksu_handle_setresuid: 2 参 -> 3 参 (内核侧 kernel/sys.c 按 3 参调用)
+# 关键: 静态键是 struct static_key_true (内部是 ->enabled), **不能**直接当布尔表达式用,
+# 否则 clang 报 "used type 'struct static_key_true' where arithmetic or pointer
+# type is required"。所有"读取"处必须换成 static_branch_likely()/unlikely()。
+sed -i 's/ksu_su_compat_enabled ? 1 : 0/static_branch_likely(\&ksu_su_compat_enabled) ? 1 : 0/' "$SC"
+include_static_key "$SC"
+
+# syscall_event_bridge.c 也用布尔方式引用它 (该文件已不被编译, 但一并改掉以免后患)
+if [ -f "$KS/hook/syscall_event_bridge.c" ]; then
+  SB="$KS/hook/syscall_event_bridge.c"
+  sed -i 's/!ksu_su_compat_enabled/!static_branch_likely(\&ksu_su_compat_enabled)/g' "$SB"
+  sed -i 's/} else if (ksu_su_compat_enabled)/} else if (static_branch_likely(\&ksu_su_compat_enabled))/' "$SB"
+  include_static_key "$SB"
+fi
+
+# 全树兜底检查: 凡把该静态键当布尔裸用(非 static_branch_*)的地方都要拦下来。
+# 合法形式只有: static_branch_*() 读取 / DEFINE_STATIC_KEY_* 定义 /
+#               extern struct static_key_true 声明。
+BADKEY="$(grep -rnE '(^|[^_a-zA-Z])ksu_su_compat_enabled' "$KS" --include=*.c --include=*.h 2>/dev/null \
+  | grep -vE 'static_branch_(likely|unlikely|enable|disable)|DEFINE_STATIC_KEY|extern struct static_key_true' || true)"
+if [ -n "$BADKEY" ]; then
+  echo "$BADKEY" | sed 's/^/    /'
+  die "$KS: 仍有把静态键当布尔裸用的地方 (会编译失败)"
+fi
+log "    ksu_su_compat_enabled -> static_key_true (赋值/读取均已改写)"
+
+# 3c. ksu_handle_setresuid: 补第 3 个参数 (内核侧 kernel/sys.c 按 3 参调用)
+#
+# 关键: 只"追加"参数, 不改参数名。函数体里有 5 处 old_uid/new_uid 引用,
+# 若改名会漏改 -> 编译报 undeclared identifier (run #43 就栽在这里)。
+# 经核对: old_uid 实际只用于一行日志, 且传给 ksu_handle_umount 后其函数体
+# 根本没用它; 真正决定行为的是 new_uid。而在 __sys_setresuid 开头调用时
+# zygote 是三参相同 (setresuid(uid,uid,uid)), 故 new_uid 取到的一定是新 uid,
+# 语义正确 —— 因此保留原名、仅加第 3 参是最小且安全的做法。
 SHOOK="$KS/hook/setuid_hook.c"; SHOOKH="$KS/hook/setuid_hook.h"
 [ -f "$SHOOK" ] || die "找不到 $SHOOK"
-sed -i 's/^int ksu_handle_setresuid(uid_t old_uid, uid_t new_uid)/int ksu_handle_setresuid(uid_t ruid, uid_t euid, uid_t suid)/' "$SHOOK"
-grep -q 'int ksu_handle_setresuid(uid_t ruid, uid_t euid, uid_t suid)' "$SHOOK" || die "$SHOOK: 改签名失败"
-sed -i 's/^int ksu_handle_setresuid(uid_t old_uid, uid_t new_uid);/int ksu_handle_setresuid(uid_t ruid, uid_t euid, uid_t suid);/' "$SHOOKH"
-sed -i 's/handle_setresuid from %d to %d\\n", old_uid, new_uid/handle_setresuid from %d to %d\\n", ruid, euid/' "$SHOOK"
-sed -i 's/is_uid_manager(new_uid)/is_uid_manager(ruid)/' "$SHOOK"
-grep -q 'is_uid_manager(ruid)' "$SHOOK" || die "$SHOOK: 函数体改名失败"
+sed -i 's/^int ksu_handle_setresuid(uid_t old_uid, uid_t new_uid)$/int ksu_handle_setresuid(uid_t old_uid, uid_t new_uid, uid_t suid)/' "$SHOOK"
+grep -q '^int ksu_handle_setresuid(uid_t old_uid, uid_t new_uid, uid_t suid)$' "$SHOOK" \
+  || die "$SHOOK: 追加第 3 参失败"
+sed -i 's/^int ksu_handle_setresuid(uid_t old_uid, uid_t new_uid);$/int ksu_handle_setresuid(uid_t old_uid, uid_t new_uid, uid_t suid);/' "$SHOOKH"
+grep -q 'int ksu_handle_setresuid(uid_t old_uid, uid_t new_uid, uid_t suid);' "$SHOOKH" \
+  || die "$SHOOKH: 头文件改签名失败"
+# 确保函数体里没有残留的未定义名字 (改名方案已弃用, 这里只做完整性确认)
+if grep -qE '\bruid\b|\beuid\b' "$SHOOK"; then
+  die "$SHOOK: 函数体里出现了不该有的 ruid/euid (改名残留)"
+fi
 BE="$KS/hook/syscall_event_bridge.c"
 [ -f "$BE" ] && sed -i 's/ksu_handle_setresuid(old_uid, current_uid().val)/ksu_handle_setresuid(old_uid, current_uid().val, current_uid().val)/' "$BE"
-log "    ksu_handle_setresuid -> 3 参"
+log "    ksu_handle_setresuid -> 追加第 3 参 (未改参数名)"
 
 # 3d. 摘除内核侧 fs/exec.c 的 sucompat 钩子块。
 #     该块要的 ksu_handle_execveat(*fd, struct filename**, void*, void*, int*) 与
@@ -184,6 +218,10 @@ cat > "$KS/feature/susfs_adapter.c" <<'CEOF'
 #include "supercall/supercall.h"
 #include "uapi/supercall.h" // KSU_INSTALL_MAGIC1
 
+/* FinaSU 的 is_ksu_domain() 实现在 kernel/selinux/selinux.c,
+ * 但没有在 selinux.h 里声明, 这里自行声明 (签名已在源码中核对)。 */
+extern bool is_ksu_domain(void);
+
 /* ---- 1) 内核侧补丁引用的静态键 ---- */
 
 /* drivers/input/input.c: static_branch_unlikely 后直接调用
@@ -218,6 +256,18 @@ void ksu_handle_sys_read(unsigned int fd)
 /* fs/stat.c: 50 补丁声明为 ksu_handle_vfs_fstat(int fd, loff_t *kstat_size_ptr) */
 void ksu_handle_vfs_fstat(int fd, loff_t *kstat_size_ptr)
 {
+}
+
+/* ---- 2b) SUS_MOUNT 需要的域判断 ----
+ *
+ * fs/namespace.c / fs/proc_namespace.c 会调用 susfs_is_current_ksu_domain(),
+ * 而 fs/susfs.c 只把它声明成 extern —— 上游是在对接补丁里实现的。
+ * 我们直接桥接 FinaSU 已有的 is_ksu_domain() (kernel/selinux/selinux.c),
+ * 语义完全一致: "当前进程是否处于 KSU 域"。
+ */
+bool susfs_is_current_ksu_domain(void)
+{
+	return is_ksu_domain();
 }
 
 /* ---- 3) SUSFS 用户态命令入口 ----
@@ -305,7 +355,17 @@ CEOF
 [ -s "$KS/feature/susfs_adapter.c" ] || die "susfs_adapter.c 写入失败"
 grep -q "ksu_handle_sys_reboot" "$KS/feature/susfs_adapter.c" || die "适配层缺少 ksu_handle_sys_reboot"
 grep -q "ksu_handle_vfs_fstat" "$KS/feature/susfs_adapter.c" || die "适配层缺少 ksu_handle_vfs_fstat"
+grep -q "susfs_is_current_ksu_domain" "$KS/feature/susfs_adapter.c" || die "适配层缺少 susfs_is_current_ksu_domain"
 log "    适配层已写入 ($(wc -l < "$KS/feature/susfs_adapter.c") 行)"
+
+# 链接期兜底: fs/susfs.c 以 extern 引用的每个符号, 必须能由
+#   (a) 内核侧 50 补丁, (b) FinaSU 自身, 或 (c) 本适配层 之一提供。
+# 上游对接补丁里定义过 susfs_is_current_ksu_domain() 之类的东西, 我们没用那个
+# 补丁, 所以必须自己逐个确认 —— 漏一个就是一轮 CI 才发现的 undefined symbol。
+log "    校验 SUSFS 侧 extern 符号是否都有提供者"
+node "$SCRIPT_DIR/check_symbols.js" fs/susfs.c "$P50" "$KS" \
+     "$KS/feature/susfs_adapter.c" \
+  || die "SUSFS 有符号无人提供 (会 undefined symbol, 见上方列表)"
 
 # 挂进 Kbuild —— 直接用已定位的 KS 前缀, 避免误挂到内核源码根自己的 Kbuild
 KB="$KS/Kbuild"
@@ -392,7 +452,7 @@ log "6/6 最终校验"
 [ -f include/linux/susfs.h ]                         || die "include/linux/susfs.h 丢失"
 [ -f include/linux/susfs_def.h ]                     || die "include/linux/susfs_def.h 丢失"
 grep -q '^obj-$(CONFIG_KSU_SUSFS) += susfs.o' fs/Makefile || die "fs/Makefile 未挂 susfs.o"
-grep -q 'ksu_handle_setresuid(uid_t ruid, uid_t euid, uid_t suid)' "$KS/hook/setuid_hook.c" || die "setresuid 3 参未生效"
+grep -q 'ksu_handle_setresuid(uid_t old_uid, uid_t new_uid, uid_t suid)' "$KS/hook/setuid_hook.c" || die "setresuid 第 3 参未生效"
 grep -q 'DEFINE_STATIC_KEY_TRUE(ksu_su_compat_enabled)' "$KS/feature/sucompat.c"          || die "su_compat 静态键未生效"
 grep -qE '^bool ksu_selinux_hide_running' "$KS/feature/selinux_hide.c"                   || die "selinux_hide 去 static 未生效"
 grep -q 'susfs_adapter.o' "$KB"                                                    || die "适配层未挂入构建"
