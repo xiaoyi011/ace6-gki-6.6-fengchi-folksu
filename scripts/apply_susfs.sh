@@ -327,6 +327,47 @@ NCFG="$(grep -c '^CONFIG_KSU_SUSFS' "$CFGFILE")"
 [ "$NCFG" = "10" ] || die "SUSFS 开关数量异常: $NCFG (期望 10)"
 log "    10 个 SUSFS 开关已写入"
 
+# ------------------------------------------------- 4b. SUSFS Kconfig 开关
+# 关键: CONFIG_KSU_SUSFS_* 这些开关原本由上游对接补丁写进 kernel/Kconfig。
+# 我们没用那个补丁, 所以必须自己把菜单补进 KernelSU 的 Kconfig, 否则
+# defconfig 里的 CONFIG_KSU_SUSFS=y 会被 kconfig 当作未知符号丢弃 ——
+# 结果是"看着配了 SUSFS, 实际一行代码都没编进去"的假包。
+KCONF="$KS/Kconfig"
+[ -f "$KCONF" ] || die "找不到 KernelSU Kconfig: $KCONF"
+KMENU="$SCRIPT_DIR/susfs_kconfig.txt"
+[ -s "$KMENU" ] || die "缺少 SUSFS Kconfig 菜单片段: $KMENU"
+if grep -q '^config KSU_SUSFS$' "$KCONF"; then
+  log "    Kconfig 已含 SUSFS 开关, 跳过"
+else
+  awk -v menu="$KMENU" '
+    { lines[NR] = $0 }
+    END {
+      last = 0
+      for (i = 1; i <= NR; i++) if (lines[i] ~ /^endmenu[[:space:]]*$/) last = i
+      if (last == 0) { print "找不到 endmenu" > "/dev/stderr"; exit 1 }
+      for (i = 1; i < last; i++) print lines[i]
+      while ((getline l < menu) > 0) print l
+      close(menu)
+      for (i = last; i <= NR; i++) print lines[i]
+    }
+  ' "$KCONF" > "$KCONF.tmp" || die "Kconfig 菜单插入失败"
+  mv "$KCONF.tmp" "$KCONF"
+  grep -q '^config KSU_SUSFS$' "$KCONF" || die "$KCONF: SUSFS 菜单插入后仍未找到 config KSU_SUSFS"
+  for o in KSU_SUSFS_SUS_PATH KSU_SUSFS_SUS_MOUNT KSU_SUSFS_SUS_KSTAT KSU_SUSFS_SPOOF_UNAME \
+           KSU_SUSFS_ENABLE_LOG KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS \
+           KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG KSU_SUSFS_OPEN_REDIRECT KSU_SUSFS_SUS_MAP; do
+    grep -q "^config $o\$" "$KCONF" || die "$KCONF: 缺少 config $o"
+  done
+  log "    SUSFS Kconfig 菜单已插入 ($(wc -l < "$KCONF") 行)"
+fi
+
+# 确认每个 defconfig 开关在 Kconfig 里都有定义 (防止被静默丢弃)
+for o in $(grep -oE '^CONFIG_KSU_SUSFS[A-Z_]*' "$CFGFILE" | sed 's/^CONFIG_//'); do
+  grep -q "^config $o\$" "$KCONF" || die "Kconfig 未定义 $o (defconfig 里写了但会被丢弃)"
+done
+log "    Kconfig 与 defconfig 开关一一对应 ✓"
+
+
 # ------------------------------------------------------------- 6. 校验
 log "6/6 最终校验"
 [ -f fs/susfs.c ]                                    || die "fs/susfs.c 丢失"
