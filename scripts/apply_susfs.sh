@@ -370,6 +370,15 @@ else
   log "    SUSFS Kconfig 菜单已插入 ($(wc -l < "$KCONF") 行)"
 fi
 
+# 结构校验: 防止把上游补丁里的 Kconfig 语法缺陷带进去。
+# 实测坑: 上游 config KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG 少了 "help",
+# 于是其 "- ..." 说明行被 kconfig 当成语句, 报
+#     drivers/kernelsu/Kconfig:121: syntax error
+#   120: unknown statement "-"
+# 这类缺陷只能在编译早期的 olddefconfig 阶段才暴露, 代价是一整轮 CI,
+# 所以这里用 node 先在本地产出阶段就拦下来。
+node "$SCRIPT_DIR/check_kconfig.js" "$KMENU" || die "SUSFS Kconfig 菜单结构校验失败"
+
 # 确认每个 defconfig 开关在 Kconfig 里都有定义 (防止被静默丢弃)
 for o in $(grep -oE '^CONFIG_KSU_SUSFS[A-Z_]*' "$CFGFILE" | sed 's/^CONFIG_//'); do
   grep -q "^config $o\$" "$KCONF" || die "Kconfig 未定义 $o (defconfig 里写了但会被丢弃)"
