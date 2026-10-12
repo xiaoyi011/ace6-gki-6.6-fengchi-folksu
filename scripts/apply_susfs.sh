@@ -106,7 +106,21 @@ grep -qE '^DEFINE_STATIC_KEY_FALSE\(fake_status_initialize_key\)' "$SH" || die "
 grep -qE '^struct page \*fake_status' "$SH"                            || die "$SH: fake_status 去 static 失败"
 grep -qE '^void initialize_fake_status\(' "$SH"                        || die "$SH: initialize_fake_status 去 static 失败"
 grep -qE '^bool ksu_selinux_hide_running' "$SH"                         || die "$SH: ksu_selinux_hide_running 去 static 失败"
-log "    selinux_hide.c 去 static 完成"
+# 内核侧 security/selinux/{hooks,selinuxfs}.c 还要用这三个 with_policy 函数
+# (内核内部策略 API 的薄包装), 也必须去 static。
+# 注意 selinux_hide.c 里每处都有"前置声明 + 实际定义"两份, 共 6 个位置;
+# 其中 compute_av_user 的定义带 __nocfi 属性。
+for pat in security_context_to_sid_with_policy security_sid_to_context_with_policy; do
+  sed -i "s/^static int $pat/int $pat/" "$SH"
+done
+sed -i 's/^static void security_compute_av_user_with_policy/void security_compute_av_user_with_policy/' "$SH"
+sed -i 's/^static void __nocfi security_compute_av_user_with_policy/void __nocfi security_compute_av_user_with_policy/' "$SH"
+n_left="$(grep -cE '^static (int|void) (__nocfi )?security_(context_to_sid|sid_to_context|compute_av_user)_with_policy' "$SH" || true)"
+[ "$n_left" = "0" ] || die "$SH: 仍有 $n_left 处 security_*_with_policy 未去 static"
+for f in security_context_to_sid_with_policy security_sid_to_context_with_policy security_compute_av_user_with_policy; do
+  grep -qE "^(int|void) (__nocfi )?$f\(" "$SH" || die "$SH: $f 去 static 后未找到定义"
+done
+log "    selinux_hide.c 去 static 完成 (含 3 个 security_*_with_policy)"
 
 # 3b. ksu_su_compat_enabled: bool -> static_key_true
 #     内核侧 fs/exec.c 用 static_branch_likely, 必须是静态键。
@@ -168,7 +182,8 @@ sed -i 's/^int ksu_handle_setresuid(uid_t old_uid, uid_t new_uid);$/int ksu_hand
 grep -q 'int ksu_handle_setresuid(uid_t old_uid, uid_t new_uid, uid_t suid);' "$SHOOKH" \
   || die "$SHOOKH: 头文件改签名失败"
 # 确保函数体里没有残留的未定义名字 (改名方案已弃用, 这里只做完整性确认)
-if grep -qE '\bruid\b|\beuid\b' "$SHOOK"; then
+# 注意: Android 的 toybox grep 不认 \b, 用 POSIX 字符类
+if grep -qE '(^|[^_a-zA-Z])(ruid|euid)([^_a-zA-Z]|$)' "$SHOOK"; then
   die "$SHOOK: 函数体里出现了不该有的 ruid/euid (改名残留)"
 fi
 BE="$KS/hook/syscall_event_bridge.c"
@@ -184,6 +199,121 @@ command -v node >/dev/null 2>&1 || die "需要 node 来摘除 fs/exec.c 钩子"
 node "$SCRIPT_DIR/strip_exec_hook.js" fs/exec.c || die "摘除 fs/exec.c sucompat 钩子失败"
 grep -q 'ksu_handle_execveat' fs/exec.c && die "fs/exec.c 仍有 ksu_handle_execveat 残留"
 log "    fs/exec.c sucompat 钩子已摘除"
+
+# ---------------------------------------------------------------------------
+# 3e. SUSFS 域 SID 缓存 -> kernel/selinux/selinux.c
+#
+# 内核侧 fs/namespace.c、security/selinux/avc.c 等引用了:
+#   susfs_is_current_ksu_domain() / susfs_is_current_zygote_domain() / ...
+#   susfs_ksu_sid / susfs_priv_app_sid / susfs_zygote_sid ...
+# 这些上游是在对接补丁里放进 kernel/selinux/selinux.c 的 (它不是 fs/susfs.c 的职责)。
+# 放在 selinux.c 而不是适配层, 是为了直接复用该文件已有的 include
+# (objsec.h -> current_sid()/selinux_cred(); 且它本就在用 security_secctx_to_secid)。
+SELC="$KS/selinux/selinux.c"
+SELH="$KS/selinux/selinux.h"
+RULESC="$KS/selinux/rules.c"
+for f in "$SELC" "$SELH" "$RULESC"; do [ -f "$f" ] || die "找不到 $f"; done
+if grep -q 'susfs_ksu_sid' "$SELC"; then
+  log "    selinux.c 已含 SUSFS SID 块, 跳过"
+else
+  cat >> "$SELC" <<'SEOF'
+
+/* ===================== SUSFS: 域 SID 缓存 (对接层) ===================== */
+#define SUSFS_INIT_DOMAIN      "u:r:init:s0"
+#define SUSFS_ZYGOTE_DOMAIN    "u:r:zygote:s0"
+#define SUSFS_ZYGOTE_NEXT_DOMAIN "u:r:zygote_next:s0"
+/* priv_app 的 MLS 字段与上游保持一致 */
+#define SUSFS_PRIV_APP_DOMAIN  "u:r:priv_app:s0:c512,c768"
+
+u32 susfs_ksu_sid __read_mostly = 0;
+u32 susfs_init_sid __read_mostly = 0;
+u32 susfs_zygote_sid __read_mostly = 0;
+u32 susfs_zygote_next_sid __read_mostly = 0;
+u32 susfs_priv_app_sid __read_mostly = 0;
+
+static void susfs_set_sid(const char *secctx_name, u32 *out_sid)
+{
+	int err;
+
+	if (!secctx_name || !out_sid)
+		return;
+	err = security_secctx_to_secid(secctx_name, strlen(secctx_name), out_sid);
+	if (err) {
+		pr_err("susfs: failed setting sid for '%s', err: %d\n", secctx_name, err);
+		return;
+	}
+	pr_info("susfs: sid '%u' is set for secctx_name '%s'\n", *out_sid, secctx_name);
+}
+
+bool susfs_is_sid_equal(const struct cred *cred, u32 sid2)
+{
+	const struct task_security_struct *tsec = selinux_cred(cred);
+
+	if (!tsec)
+		return false;
+	return tsec->sid == sid2;
+}
+
+u32 susfs_get_sid_from_name(const char *secctx_name)
+{
+	u32 out_sid = 0;
+	int err;
+
+	if (!secctx_name)
+		return 0;
+	err = security_secctx_to_secid(secctx_name, strlen(secctx_name), &out_sid);
+	if (err)
+		return 0;
+	return out_sid;
+}
+
+u32 susfs_get_current_sid(void)
+{
+	return current_sid();
+}
+
+bool susfs_is_current_zygote_domain(void)
+{
+	return unlikely(current_sid() == susfs_zygote_sid);
+}
+
+bool susfs_is_current_zygote_next_domain(void)
+{
+	return unlikely(current_sid() == susfs_zygote_next_sid);
+}
+
+bool susfs_is_current_ksu_domain(void)
+{
+	return unlikely(current_sid() == susfs_ksu_sid);
+}
+
+bool susfs_is_current_init_domain(void)
+{
+	return unlikely(current_sid() == susfs_init_sid);
+}
+
+void susfs_set_batch_sid(void)
+{
+	susfs_set_sid(SUSFS_ZYGOTE_DOMAIN, &susfs_zygote_sid);
+	susfs_set_sid(SUSFS_ZYGOTE_NEXT_DOMAIN, &susfs_zygote_next_sid);
+	susfs_set_sid(KERNEL_SU_CONTEXT, &susfs_ksu_sid);
+	susfs_set_sid(SUSFS_INIT_DOMAIN, &susfs_init_sid);
+	susfs_set_sid(SUSFS_PRIV_APP_DOMAIN, &susfs_priv_app_sid);
+}
+/* =================== SUSFS: 域 SID 缓存 结束 =================== */
+SEOF
+  # 声明进 selinux.h (rules.c 要调用 susfs_set_batch_sid)
+  if ! grep -q 'susfs_set_batch_sid' "$SELH"; then
+    awk 'BEGIN{done=0} { if(!done && /^#endif/){ print "extern u32 susfs_ksu_sid;"; print "extern u32 susfs_init_sid;"; print "extern u32 susfs_zygote_sid;"; print "extern u32 susfs_zygote_next_sid;"; print "extern u32 susfs_priv_app_sid;"; print "bool susfs_is_sid_equal(const struct cred *cred, u32 sid2);"; print "u32 susfs_get_sid_from_name(const char *secctx_name);"; print "u32 susfs_get_current_sid(void);"; print "bool susfs_is_current_zygote_domain(void);"; print "bool susfs_is_current_zygote_next_domain(void);"; print "bool susfs_is_current_ksu_domain(void);"; print "bool susfs_is_current_init_domain(void);"; print "void susfs_set_batch_sid(void);"; print ""; done=1 } print }' "$SELH" > "$SELH.tmp" && mv "$SELH.tmp" "$SELH"
+    grep -q 'susfs_set_batch_sid' "$SELH" || die "$SELH: SUSFS 声明插入失败"
+  fi
+  # 在 apply_kernelsu_rules() 末尾 (reset_avc_cache() 之后) 设置 sid
+  # 只改第一个 reset_avc_cache(); (即 apply_kernelsu_rules 内的那个)
+  awk 'BEGIN{done=0} { print; if(!done && /^[[:space:]]*reset_avc_cache\(\);/){ print "\tsusfs_set_batch_sid();"; done=1 } }' \
+      "$RULESC" > "$RULESC.tmp" && mv "$RULESC.tmp" "$RULESC"
+  grep -q 'susfs_set_batch_sid();' "$RULESC" || die "$RULESC: susfs_set_batch_sid() 调用插入失败"
+  log "    SUSFS SID 块 -> selinux.c; 声明 -> selinux.h; 初始化 -> rules.c"
+fi
 
 # ---------------------------------------------------------- 4. 适配层
 log "4/6 写 KSU 适配层 feature/susfs_adapter.c"
@@ -217,10 +347,6 @@ cat > "$KS/feature/susfs_adapter.c" <<'CEOF'
 #include "ksu.h"
 #include "supercall/supercall.h"
 #include "uapi/supercall.h" // KSU_INSTALL_MAGIC1
-
-/* FinaSU 的 is_ksu_domain() 实现在 kernel/selinux/selinux.c,
- * 但没有在 selinux.h 里声明, 这里自行声明 (签名已在源码中核对)。 */
-extern bool is_ksu_domain(void);
 
 /* ---- 1) 内核侧补丁引用的静态键 ---- */
 
@@ -258,17 +384,12 @@ void ksu_handle_vfs_fstat(int fd, loff_t *kstat_size_ptr)
 {
 }
 
-/* ---- 2b) SUS_MOUNT 需要的域判断 ----
+/* ---- 2b) 域判断 ----
  *
- * fs/namespace.c / fs/proc_namespace.c 会调用 susfs_is_current_ksu_domain(),
- * 而 fs/susfs.c 只把它声明成 extern —— 上游是在对接补丁里实现的。
- * 我们直接桥接 FinaSU 已有的 is_ksu_domain() (kernel/selinux/selinux.c),
- * 语义完全一致: "当前进程是否处于 KSU 域"。
+ * susfs_is_current_ksu_domain() / susfs_get_current_sid() 等等由
+ * kernel/selinux/selinux.c 里的 SUSFS SID 块提供 (见脚本第 3e 步),
+ * 那里和上游对接补丁的做法一致 (用 current_sid() 与缓存的 sid 比较)。
  */
-bool susfs_is_current_ksu_domain(void)
-{
-	return is_ksu_domain();
-}
 
 /* ---- 3) SUSFS 用户态命令入口 ----
  *
@@ -355,7 +476,6 @@ CEOF
 [ -s "$KS/feature/susfs_adapter.c" ] || die "susfs_adapter.c 写入失败"
 grep -q "ksu_handle_sys_reboot" "$KS/feature/susfs_adapter.c" || die "适配层缺少 ksu_handle_sys_reboot"
 grep -q "ksu_handle_vfs_fstat" "$KS/feature/susfs_adapter.c" || die "适配层缺少 ksu_handle_vfs_fstat"
-grep -q "susfs_is_current_ksu_domain" "$KS/feature/susfs_adapter.c" || die "适配层缺少 susfs_is_current_ksu_domain"
 log "    适配层已写入 ($(wc -l < "$KS/feature/susfs_adapter.c") 行)"
 
 # 链接期兜底: fs/susfs.c 以 extern 引用的每个符号, 必须能由
