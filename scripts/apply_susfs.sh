@@ -23,6 +23,9 @@ KROOT="$(pwd)"
 # 用 $0 而非 BASH_SOURCE: Android 的 sh(mksh) 没有 BASH_SOURCE 数组,
 # 而本脚本在手机本地与 CI(gawk/bash) 下都要能跑。
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+# 放中间产物(精简后的补丁)的临时目录
+WORKDIR_TMP="$(mktemp -d 2>/dev/null || echo /tmp/susfs_apply.$$)"
+mkdir -p "$WORKDIR_TMP"
 
 log() { echo "    [susfs] $*"; }
 die() { echo "!!! [susfs] 致命: $*" >&2; exit 1; }
@@ -58,11 +61,25 @@ cp "$KP/include/linux/susfs_def.h" include/linux/susfs_def.h || die "拷贝 susf
 
 # ------------------------------------------------------------ 2. 内核侧补丁
 log "2/6 应用内核侧补丁"
+
+# 关键: 先摘掉 SUSFS 对 security/selinux/{avc,hooks,selinuxfs}.c 的改动。
+# FinaSU 自己已经用另一套机制实现了同样的 SELinux 隐藏:
+#   selinux_hide.c 运行时 patch sel_handle_status_ops->open + LSM hook setprocattr
+#   avc_spoof.c    kprobe 拦 slow_avc_audit
+# SUSFS 又在源码层改同一批函数 -> 两层叠加, SELinux 对外行为与原包不同,
+# 会被"春秋检测"之类工具判为可疑 SELinux (实测: 不带 SUSFS 的原包不报, 带则报)。
+# 摘除后 SELinux 行为回到与 FinaSU 原包一致, SUSFS 其余功能全部保留。
+P50_USE="$P50"
+P50_STRIPPED="$WORKDIR_TMP/50_susfs_no_selinux.patch"
+mkdir -p "$WORKDIR_TMP"
+node "$SCRIPT_DIR/strip_selinux_hunks.js" "$P50" "$P50_STRIPPED" || die "摘除 SELinux 改动失败"
+P50_USE="$P50_STRIPPED"
+
 # 两个坑 (都是实测踩到的):
 #   1) toybox patch 的 --dry-run **仍会改文件**, 所以不能拿它当"纯预检";
 #   2) 风驰补丁已给树带来 +3 行左右的漂移, 用 -F0 会误判, 必须留 fuzz。
 # 因此: 直接以 -F3 正式应用, 然后靠 "FAILED / .rej / 关键产物" 三重校验兜底。
-PATCH_OUT="$(patch -p1 -F3 --no-backup-if-mismatch -i "$P50" 2>&1)" || true
+PATCH_OUT="$(patch -p1 -F3 --no-backup-if-mismatch -i "$P50_USE" 2>&1)" || true
 echo "$PATCH_OUT" | grep -iE 'succeeded at .*offset' | sed 's/^/    /' || true
 if echo "$PATCH_OUT" | grep -qiE 'FAILED'; then
   echo "$PATCH_OUT" | grep -iE 'FAILED' | sed 's/^/    /'
@@ -76,7 +93,11 @@ REJ="$(find . -name '*.rej' -not -path './.git/*' | wc -l)"
 grep -q 'susfs.o' fs/Makefile                    || die "fs/Makefile 未挂入 susfs.o (补丁没生效?)"
 grep -q 'ksu_is_input_hook_enabled' drivers/input/input.c || die "drivers/input/input.c 未打上输入钩子"
 grep -q 'ksu_handle_sys_reboot' kernel/reboot.c  || die "kernel/reboot.c 未打上 SUSFS 分派"
-log "    已应用, 0 reject"
+# 反向确认: 三个 SELinux 文件必须**没有**被 SUSFS 改动 (否则又会和 FinaSU 打架)
+for f in security/selinux/avc.c security/selinux/hooks.c security/selinux/selinuxfs.c; do
+  grep -q 'CONFIG_KSU_SUSFS' "$f" && die "$f 仍被 SUSFS 改动 (会与 FinaSU 的 SELinux 隐藏冲突)"
+done
+log "    已应用, 0 reject; SELinux 三个文件保持原样 (交给 FinaSU 自己的机制)"
 
 # ------------------------------------------------------- 3. FinaSU 侧改动
 log "3/6 FinaSU 侧适配改动"
@@ -483,7 +504,7 @@ log "    适配层已写入 ($(wc -l < "$KS/feature/susfs_adapter.c") 行)"
 # 上游对接补丁里定义过 susfs_is_current_ksu_domain() 之类的东西, 我们没用那个
 # 补丁, 所以必须自己逐个确认 —— 漏一个就是一轮 CI 才发现的 undefined symbol。
 log "    校验 SUSFS 侧 extern 符号是否都有提供者"
-node "$SCRIPT_DIR/check_symbols.js" fs/susfs.c "$P50" "$KS" \
+node "$SCRIPT_DIR/check_symbols.js" fs/susfs.c "$P50_USE" "$KS" \
      "$KS/feature/susfs_adapter.c" \
   || die "SUSFS 有符号无人提供 (会 undefined symbol, 见上方列表)"
 
