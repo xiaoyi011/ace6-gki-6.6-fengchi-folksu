@@ -38,6 +38,7 @@ KSU_EXPECTED_VERSION="${KSU_EXPECTED_VERSION:-32787}"
 
 APPLY_FENGCHI="${APPLY_FENGCHI:-1}"
 APPLY_SUSFS="${APPLY_SUSFS:-0}"
+SUSFS_APPLIED="${SUSFS_APPLIED:-0}"   # 由第 5 节置 1, 供后续校验/build-info 使用
 # APPLY_KSU=0: 内核里【不】集成 KernelSU。
 # 一加 Ace 6 这台机器的 root 是 init_boot ramdisk 里的 kernelsu.ko (LKM 模式,
 # ksu_config 里 bundled=1, 由 wrapper init / ksuinit 在开机时 insmod)。
@@ -286,35 +287,30 @@ else
 fi
 
 # --------------------------- 5. SuSFS (默认关闭) -----------------------------
+# 严格 fail-fast 集成, 逻辑见 scripts/apply_susfs.sh:
+#   * 内核侧: susfs4ksu 官方 gki-android15-6.6 补丁 (要求零 fuzz, 否则直接失败)
+#   * KSU 侧 : 自包含适配层 kernel/feature/susfs_adapter.c
+#              (上游 10_enable_susfs_for_ksu.patch 是给老版 KernelSU 写的,
+#               与 FolkSU/FinaSU 当前结构代差过大, 不用)
+# 旧实现用 patch -F3 + warn "冲突" 后继续, 会产出"看着有 SUSFS 实际没编进去"的包,
+# 这里改为任何异常即 die。
 if [ "$APPLY_SUSFS" = "1" ]; then
-  log "应用 SuSFS 补丁 (实验性)"
+  log "5. 集成 SuSFS (标准全套, 严格校验)"
   SUSFS_DIR="$WORKDIR/susfs4ksu"
-  # 上游把 6.6 补丁从 main 挪到了 gki-android15-6.6 分支 (main 只剩 4.x/5.4)
-  [ -d "$SUSFS_DIR/.git" ] || git clone --depth=1 --branch gki-android15-6.6 https://github.com/ShirkNeko/susfs4ksu.git "$SUSFS_DIR" || true
-  P="$SUSFS_DIR/kernel_patches/50_add_susfs_in_gki-android15-6.6.patch"
-  if [ -f "$P" ]; then
-    cp "$SUSFS_DIR"/kernel_patches/fs/* fs/ 2>/dev/null || true
-    cp "$SUSFS_DIR"/kernel_patches/include/linux/* include/linux/ 2>/dev/null || true
-    patch -p1 -F3 --no-backup-if-mismatch < "$P" || warn "SuSFS 内核补丁有冲突"
-    K="$SUSFS_DIR/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch"
-    if [ -f "$K" ]; then
-      ( cd KernelSU && patch -p1 -F3 --no-backup-if-mismatch < "$K" ) \
-        || warn "SuSFS 与 FolkSU 的联动补丁冲突 (FolkSU 已重构目录结构)"
-    fi
-    cat >> "$CFGFILE" <<'EOF'
-CONFIG_KSU_SUSFS=y
-CONFIG_KSU_SUSFS_SUS_PATH=y
-CONFIG_KSU_SUSFS_SUS_MOUNT=y
-CONFIG_KSU_SUSFS_SUS_KSTAT=y
-CONFIG_KSU_SUSFS_TRY_UMOUNT=y
-CONFIG_KSU_SUSFS_SPOOF_UNAME=y
-CONFIG_KSU_SUSFS_ENABLE_LOG=y
-CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS=y
-CONFIG_KSU_SUSFS_OPEN_REDIRECT=y
-EOF
-  else
-    warn "未找到 SuSFS 补丁, 跳过"
-  fi
+  [ -d "$SUSFS_DIR/kernel_patches" ] || {
+    rm -rf "$SUSFS_DIR"
+    git clone --depth=1 --branch gki-android15-6.6 \
+      https://github.com/ShirkNeko/susfs4ksu.git "$SUSFS_DIR" \
+      || die "克隆 susfs4ksu 失败"
+  }
+  [ -f "$SUSFS_DIR/kernel_patches/50_add_susfs_in_gki-android15-6.6.patch" ] \
+    || die "susfs4ksu 缺少 6.6 内核补丁"
+  bash "$REPO_ROOT/scripts/apply_susfs.sh" "$SUSFS_DIR" "$CFGFILE" \
+    || die "SUSFS 集成失败 (见上方 [susfs] 输出)"
+  SUSFS_APPLIED=1
+else
+  warn "APPLY_SUSFS=0 -> 不集成 SuSFS"
+  SUSFS_APPLIED=0
 fi
 
 # ---- BBG (Baseband-guard) 防格机 ----
@@ -411,7 +407,9 @@ EOF
 if [ "$APPLY_KSU" = "1" ]; then
   echo 'CONFIG_KSU=y' >> "$CFGFILE"
 fi
-if [ "$APPLY_SUSFS" != "1" ] && [ "$APPLY_KSU" = "1" ]; then
+# SUSFS 未集成时显式关闭 (集成时 apply_susfs.sh 已写入全套 =y)
+if [ "$SUSFS_APPLIED" != "1" ] && [ "$APPLY_KSU" = "1" ] \
+   && ! grep -q '^CONFIG_KSU_SUSFS=' "$CFGFILE"; then
   echo 'CONFIG_KSU_SUSFS=n' >> "$CFGFILE"
 fi
 if [ "$ENABLE_BTF" = "1" ]; then
@@ -547,7 +545,7 @@ cp "$IMAGE" "$WORKDIR/out/Image"
   echo "KSU_EXPECTED_SIZE=$KSU_EXPECTED_SIZE"
   echo "KSU_EXPECTED_HASH=$KSU_EXPECTED_HASH"
   echo "FENGCHI=$APPLY_FENGCHI"
-  echo "SUSFS=$APPLY_SUSFS"
+  echo "SUSFS=$SUSFS_APPLIED"
   echo "BUILT_AT=$(date -u '+%Y-%m-%d %H:%M:%S UTC')"
 } | tee "$WORKDIR/out/build-info.txt"
 
