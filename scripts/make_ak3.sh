@@ -52,7 +52,7 @@ cp "$REPO_ROOT/ak3/anykernel.sh" "$WORK/anykernel.sh"
 # 按机型替换占位符 (sed 用 | 作分隔符 —— DEV_IDS 里含 '/' 不会破坏替换)
 sed -i "s|@DEV_NAME@|${DEV_NAME:-一加 Ace 6}|g; s|@DEV_IDS@|${DEV_IDS:-PLQ110/ossi/SM8750}|g" "$WORK/anykernel.sh"
 # 标题行也按机型来, 否则会印着别的机型的内核名
-sed -i "s|^kernel.string=.*|kernel.string=${DEV_NAME:-Ace6 GKI 6.6} (fengchi + FinaSU)|" "$WORK/anykernel.sh"
+sed -i "s|^kernel.string=.*|kernel.string=${DEV_NAME:-Ace6 GKI 6.6}|" "$WORK/anykernel.sh"
 chmod 755 "$WORK/anykernel.sh"
 
 log "放入内核镜像"
