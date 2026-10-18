@@ -99,6 +99,10 @@ on:
         description: '用参考内核(实测可启动)的完整 .config 代替树的 gki_defconfig (configs/ref-6.6.150.config)'
         type: boolean
         default: false
+      extra_config:
+        description: '额外 CONFIG 覆盖 (空格分隔, 支持 =y/=m/=n/=数字/=字符串), 仅调试对照用'
+        type: string
+        default: ''
 
 concurrency:
   group: ace6-gki-${{ github.ref }}
@@ -207,6 +211,7 @@ jobs:
           BUILD_TARGET: ${{ github.event.inputs.build_target }}
           TOOLCHAIN: ${{ github.event.inputs.toolchain }}
           USE_REF_CONFIG: ${{ github.event.inputs.use_ref_config == 'true' && '1' || '0' }}
+          EXTRA_CONFIG: ${{ github.event.inputs.extra_config }}
           RELAX_VERMAGIC: ${{ github.event.inputs.relax_vermagic == 'true' && '1' || '0' }}
           INSTALL_DEPS: '0'
         run: |

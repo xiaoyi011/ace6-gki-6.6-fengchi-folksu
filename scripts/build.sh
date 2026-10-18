@@ -78,6 +78,7 @@ TCP_DEFAULT_CONG="${TCP_DEFAULT_CONG:-cubic}"
 # (configs/ref-6.6.150.config, 来自参考内核运行时 /proc/config.gz)。这样把"配置"这个
 # 变量彻底从对照实验里拿掉: 剩下的差异只有 源码树 / 工具链 / LOCALVERSION 三项。
 USE_REF_CONFIG="${USE_REF_CONFIG:-0}"
+EXTRA_CONFIG="${EXTRA_CONFIG:-}"
 REF_CONFIG_FILE="${REF_CONFIG_FILE:-$REPO_ROOT/configs/ref-6.6.150.config}"
 
 # 管理器证书的 (长度, SHA-256) —— 取自 v2 签名里第一张 certificate (DER) 的 sha256。
@@ -546,6 +547,35 @@ if [ "$APPLY_BBG" = "1" ]; then
   fi
   grep -E '^(CONFIG_BBG|CONFIG_LSM)=' out/.config | sed 's/^/    /'
   grep -q '^CONFIG_BBG=y' out/.config || die "CONFIG_BBG 没被打开 (检查 security/baseband-guard/Kconfig)"
+fi
+
+# --------------------------- 6.5 额外配置覆盖 (调试对照用) -------------------
+# EXTRA_CONFIG: 空格分隔的 CONFIG 覆盖项, 例:
+#   CONFIG_HIBERNATION=n CONFIG_PM_USERSPACE_AUTOSLEEP=n CONFIG_PAGE_BLOCK_ORDER=9
+# 只改 .config 里写死的值, 依赖关系交给随后的 olddefconfig 收拾, 不碰任何源码。
+if [ -n "$EXTRA_CONFIG" ]; then
+  log "额外配置覆盖: $EXTRA_CONFIG"
+  _ec_changed=0
+  for item in $EXTRA_CONFIG; do
+    sym="${item%%=*}"; val="${item#*=}"
+    case "$sym" in
+      CONFIG_*) ;;
+      *) warn "跳过非 CONFIG 项: $item"; continue ;;
+    esac
+    name="${sym#CONFIG_}"
+    case "$val" in
+      n|N) scripts/config --file out/.config --disable "$name"; _ec_changed=1 ;;
+      y|Y) scripts/config --file out/.config --enable  "$name"; _ec_changed=1 ;;
+      m|M) scripts/config --file out/.config --module  "$name"; _ec_changed=1 ;;
+      ''|*[!0-9xXa-fA-F]*) scripts/config --file out/.config --set-str "$name" "${val%\"}"; _ec_changed=1 ;;
+      *)   scripts/config --file out/.config --set-val "$name" "$val"; _ec_changed=1 ;;
+    esac
+    echo "    $sym=$val"
+  done
+  if [ "$_ec_changed" = "1" ]; then
+    log "  olddefconfig 收拾依赖关系"
+    make "${MAKE_ARGS[@]}" olddefconfig
+  fi
 fi
 
 # 关键配置校验 (调度的判断要"树无关":
