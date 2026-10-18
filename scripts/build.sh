@@ -194,6 +194,17 @@ if [ "$APPLY_FENGCHI" = "1" ]; then
   [ -f "$PATCH_FILE" ] || die "找不到风驰补丁"
   echo "    补丁: $(basename "$PATCH_FILE")"
 
+  # 6.6.30 等历史基线的树里没有 include/linux/sched/hmbird.h,
+  # 而补丁是"修改"它(不是新建) -> patch 会整块跳过, 导致 sched.h include 找不到头文件。
+  # 这里从 ace6 分支预取该文件的原始(pre-image)版本。
+  if [ ! -f include/linux/sched/hmbird.h ]; then
+    mkdir -p include/linux/sched
+    curl -fsSL --retry 3 -o include/linux/sched/hmbird.h \
+      "https://raw.githubusercontent.com/OnePlusOSS/android_kernel_common_oneplus_sm8750/oneplus/sm8750_b_16.0.0_ace_6/include/linux/sched/hmbird.h" \
+      || die "预取 include/linux/sched/hmbird.h 失败"
+    echo "    已预取 include/linux/sched/hmbird.h ($(wc -l < include/linux/sched/hmbird.h) 行)"
+  fi
+
   # 风驰以 hmbird 取代 AOSP sched_ext, 基线必须是带 SLIM_SCHED/SCHED_CLASS_EXT 的树
   grep -q '^CONFIG_SCHED_CLASS_EXT=y' arch/arm64/configs/gki_defconfig \
     || warn "基线 gki_defconfig 没有 CONFIG_SCHED_CLASS_EXT=y, 补丁可能不匹配"
