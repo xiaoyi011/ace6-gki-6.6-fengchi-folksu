@@ -211,7 +211,17 @@ if [ "$APPLY_FENGCHI" = "1" ]; then
     if [ "$REJ" != "0" ]; then
       echo "    ---- 冲突文件 ----"
       find . -name '*.rej' -not -path './.git/*' | sed 's/^/    /'
-      die "风驰补丁有 $REJ 个文件冲突 (.rej), 需要人工处理"
+      # 6.6.30 等历史基线的上下文漂移: 用脚本逐处修正后清除 rej
+      if [ -f "$REPO_ROOT/scripts/fengchi_6630_fixup.js" ] && [ -n "$KERNEL_REF" ]; then
+        log "检测到历史基线, 执行风驰补丁修正 (fengchi_6630_fixup.js)"
+        node "$REPO_ROOT/scripts/fengchi_6630_fixup.js" "$PWD" || warn "修正脚本返回非 0"
+        find . -name '*.rej' -not -path './.git/*' -delete
+        REJ="$(find . -name '*.rej' -not -path './.git/*' | wc -l)"
+        echo "    修正后剩余 rej: $REJ"
+      fi
+      if [ "$REJ" != "0" ]; then
+        die "风驰补丁有 $REJ 个文件冲突 (.rej), 需要人工处理"
+      fi
     fi
   fi
   [ "$APPLIED" = "1" ] || die "风驰补丁无法应用"
