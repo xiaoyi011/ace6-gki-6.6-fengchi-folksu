@@ -151,11 +151,27 @@ if [ ! -d "$KERNEL_DIR/.git" ]; then
   echo "    仓库: $KERNEL_REPO"
   echo "    分支: $KERNEL_BRANCH"
   if [ -n "$KERNEL_REF" ]; then
-    echo "    提交: $KERNEL_REF (按提交检出, 不用分支头)"
-    git init -q "$KERNEL_DIR"
-    git -C "$KERNEL_DIR" remote add origin "$KERNEL_REPO"
-    git -C "$KERNEL_DIR" fetch -q --depth=1 origin "$KERNEL_REF"
-    git -C "$KERNEL_DIR" checkout -q FETCH_HEAD
+    # GitHub 不允许按"未广告的 SHA"直接 fetch (会报 couldn't find remote ref),
+    # 因此改为下载 codeload 归档 (支持任意 commit), 再本地 git init 生成工作树+索引,
+    # 这样后面的 git apply / .git/info/exclude 仍然可用。
+    echo "    提交: $KERNEL_REF (按提交下载归档)"
+    _ARCH="$(mktemp -d)"
+    _URL="${KERNEL_REPO%.git}"
+    _URL="${_URL/github.com/codeload.github.com}"
+    curl -fsSL --retry 3 -o "$_ARCH/src.zip" "$_URL/zip/$KERNEL_REF" \
+      || die "下载源码归档失败: $_URL/zip/$KERNEL_REF"
+    mkdir -p "$KERNEL_DIR"
+    unzip -q "$_ARCH/src.zip" -d "$_ARCH/x" || die "解压源码归档失败"
+    _TOP="$(ls -d "$_ARCH"/x/*/ | head -1)"
+    [ -n "$_TOP" ] || die "源码归档结构异常"
+    shopt -s dotglob 2>/dev/null || true
+    mv "$_TOP"* "$KERNEL_DIR"/ || die "移动源码失败"
+    rm -rf "$_ARCH"
+    cd "$KERNEL_DIR"
+    git init -q .
+    git -c user.name=ci -c user.email=ci@local add -A >/dev/null 2>&1
+    git -c user.name=ci -c user.email=ci@local commit -qm "vendor-source@$KERNEL_REF" >/dev/null 2>&1 || true
+    echo "    已在本地建立 git 索引 (HEAD=$(git rev-parse --short HEAD 2>/dev/null))"
   else
       git clone --depth=1 --branch "$KERNEL_BRANCH" "$KERNEL_REPO" "$KERNEL_DIR"
   fi
