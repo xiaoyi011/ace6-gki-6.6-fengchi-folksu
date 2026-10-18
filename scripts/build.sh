@@ -167,11 +167,10 @@ if [ ! -d "$KERNEL_DIR/.git" ]; then
     shopt -s dotglob 2>/dev/null || true
     mv "$_TOP"* "$KERNEL_DIR"/ || die "移动源码失败"
     rm -rf "$_ARCH"
-    cd "$KERNEL_DIR"
-    git init -q .
-    git -c user.name=ci -c user.email=ci@local add -A >/dev/null 2>&1
-    git -c user.name=ci -c user.email=ci@local commit -qm "vendor-source@$KERNEL_REF" >/dev/null 2>&1 || true
-    echo "    已在本地建立 git 索引 (HEAD=$(git rev-parse --short HEAD 2>/dev/null))"
+    git -C "$KERNEL_DIR" init -q .
+    git -C "$KERNEL_DIR" -c user.name=ci -c user.email=ci@local add -A >/dev/null 2>&1
+    git -C "$KERNEL_DIR" -c user.name=ci -c user.email=ci@local commit -qm "vendor-source@$KERNEL_REF" >/dev/null 2>&1 || true
+    echo "    已在本地建立 git 索引 (HEAD=$(git -C "$KERNEL_DIR" rev-parse --short HEAD 2>/dev/null))"
   else
       git clone --depth=1 --branch "$KERNEL_BRANCH" "$KERNEL_REPO" "$KERNEL_DIR"
   fi
