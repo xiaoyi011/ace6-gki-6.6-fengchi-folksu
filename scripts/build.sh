@@ -218,6 +218,7 @@ if [ "$APPLY_FENGCHI" = "1" ]; then
         find . -name '*.rej' -not -path './.git/*' -delete
         REJ="$(find . -name '*.rej' -not -path './.git/*' | wc -l)"
         echo "    修正后剩余 rej: $REJ"
+        APPLIED=1
       fi
       if [ "$REJ" != "0" ]; then
         die "风驰补丁有 $REJ 个文件冲突 (.rej), 需要人工处理"
