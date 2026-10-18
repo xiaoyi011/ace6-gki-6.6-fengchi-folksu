@@ -45,6 +45,7 @@ KSU_TAG="${KSU_TAG:-v1.0.4}"
 KSU_EXPECTED_VERSION="${KSU_EXPECTED_VERSION:-32960}"
 
 APPLY_FENGCHI="${APPLY_FENGCHI:-1}"
+FENGCHI_PATCH_URL="${FENGCHI_PATCH_URL:-}"
 APPLY_SUSFS="${APPLY_SUSFS:-0}"
 SUSFS_APPLIED="${SUSFS_APPLIED:-0}"   # 由第 5 节置 1, 供后续校验/build-info 使用
 # APPLY_KSU=0: 内核里【不】集成 KernelSU。
@@ -192,13 +193,26 @@ if [ "$APPLY_FENGCHI" = "1" ]; then
   # 19 处基线漂移已逐条解决, 并验证 git apply 0 reject
   PATCH_FILE="$REPO_ROOT/patches/fengchi-ace6.patch"
   [ -f "$PATCH_FILE" ] || PATCH_FILE="$REPO_ROOT/patches/fengchi.patch"
+  # 机型专用补丁 (Ace 5 Pro / 一加13 等 A15 v_* 线): 直接下载, 优先级最高。
+  # 这类补丁自带 include/linux/sched/hmbird.h, 且会顺手把 gki_defconfig 换成 HMBIRD。
+  if [ -n "$FENGCHI_PATCH_URL" ]; then
+    PATCH_FILE="$WORKDIR/fengchi-machine.patch"
+    mkdir -p "$WORKDIR"
+    curl -fsSL --retry 3 -o "$PATCH_FILE" "$FENGCHI_PATCH_URL" \
+      || die "下载机型专用风驰补丁失败: $FENGCHI_PATCH_URL"
+    echo "    机型专用补丁: $(basename "$FENGCHI_PATCH_URL") ($(wc -c < "$PATCH_FILE") 字节)"
+  fi
   [ -f "$PATCH_FILE" ] || die "找不到风驰补丁"
   echo "    补丁: $(basename "$PATCH_FILE")"
 
   # 6.6.30 等历史基线的树里没有 include/linux/sched/hmbird.h,
   # 而补丁是"修改"它(不是新建) -> patch 会整块跳过, 导致 sched.h include 找不到头文件。
-  # 这里从 ace6 分支预取该文件的原始(pre-image)版本。
-  if [ ! -f include/linux/sched/hmbird.h ]; then
+  # 这里从 ace6 分支预取该文件的原始(pre-image)版本; 补丁自带该文件时跳过。
+  _creates_hmbird_h=0
+  if grep -A2 '^diff --git a/include/linux/sched/hmbird.h' "$PATCH_FILE" | grep -q '^new file mode'; then
+    _creates_hmbird_h=1
+  fi
+  if [ ! -f include/linux/sched/hmbird.h ] && [ "$_creates_hmbird_h" = "0" ]; then
     mkdir -p include/linux/sched
     curl -fsSL --retry 3 -o include/linux/sched/hmbird.h \
       "https://raw.githubusercontent.com/OnePlusOSS/android_kernel_common_oneplus_sm8750/oneplus/sm8750_b_16.0.0_ace_6/include/linux/sched/hmbird.h" \
@@ -224,7 +238,7 @@ if [ "$APPLY_FENGCHI" = "1" ]; then
       echo "    ---- 冲突文件 ----"
       find . -name '*.rej' -not -path './.git/*' | sed 's/^/    /'
       # 6.6.30 等历史基线的上下文漂移: 用脚本逐处修正后清除 rej
-      if [ -f "$REPO_ROOT/scripts/fengchi_6630_fixup.js" ] && [ -n "$KERNEL_REF" ]; then
+      if [ -f "$REPO_ROOT/scripts/fengchi_6630_fixup.js" ] && [ -n "$KERNEL_REF" ] && [ -z "$FENGCHI_PATCH_URL" ]; then
         log "检测到历史基线, 执行风驰补丁修正 (fengchi_6630_fixup.js)"
         node "$REPO_ROOT/scripts/fengchi_6630_fixup.js" "$PWD" || warn "修正脚本返回非 0"
         find . -name '*.rej' -not -path './.git/*' -delete

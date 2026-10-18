@@ -13,6 +13,10 @@ on:
         description: '移植风驰内核 (HMBIRD/scx 调度器)'
         type: boolean
         default: true
+      fengchi_patch_url:
+        description: '机型专用风驰补丁 URL (留空=用仓库内 fengchi-ace6.patch; 如 Ace5 Pro 用 WildKernels oneplus/hmbird/fengchi_OP-ACE-5-PRO_A15.patch)'
+        type: string
+        default: ''
       apply_susfs:
         description: '附加 SuSFS 隐藏补丁 (与 FinaSU 目录结构可能冲突)'
         type: boolean
@@ -194,6 +198,7 @@ jobs:
       - name: 编译内核
         env:
           APPLY_FENGCHI: ${{ github.event.inputs.apply_fengchi == 'true' && '1' || '0' }}
+          FENGCHI_PATCH_URL: ${{ github.event.inputs.fengchi_patch_url }}
           APPLY_SUSFS: ${{ github.event.inputs.apply_susfs == 'true' && '1' || '0' }}
           APPLY_KSU: ${{ github.event.inputs.apply_ksu == 'true' && '1' || '0' }}
           APPLY_ZRAM: ${{ github.event.inputs.apply_zram == 'true' && '1' || '0' }}
