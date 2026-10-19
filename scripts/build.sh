@@ -255,7 +255,11 @@ if [ "$APPLY_FENGCHI" = "1" ]; then
 
   # 结构校验: hmbird 实现必须在, AOSP sched_ext 必须已被移除
   [ -f kernel/sched/hmbird/hmbird.c ] || die "缺少 kernel/sched/hmbird/hmbird.c, 风驰补丁不完整"
-  [ -f include/linux/sched/sched_ext.h ] || die "缺少 include/linux/sched/sched_ext.h"
+  # include/linux/sched/sched_ext.h 只在部分树(如 ace_6)里存在, 13s/13t 等树本来就没有,
+  # 不能当硬条件 —— 真正要保证的是 ext.c/ext.h 已被移除(下面两行)。
+  if [ -f include/linux/sched/sched_ext.h ]; then
+    echo "    include/linux/sched/sched_ext.h 仍在 (该树自带, 不阻断)"
+  fi
   [ -f kernel/sched/ext.c ] && die "AOSP kernel/sched/ext.c 仍在"
   [ -f include/linux/sched/ext.h ] && die "AOSP include/linux/sched/ext.h 仍在"
 
