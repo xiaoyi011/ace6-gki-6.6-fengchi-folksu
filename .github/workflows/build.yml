@@ -109,7 +109,7 @@ on:
         default: ''
 
 concurrency:
-  group: ace6-gki-${{ github.ref }}
+  group: ace6-gki-${{ github.ref }}-${{ github.event.inputs.device_tag }}
   cancel-in-progress: false
 
 jobs:
