@@ -287,6 +287,17 @@ fi
 git -C "$KSU_DIR" fetch --tags --quiet 2>/dev/null || true
 git -C "$KSU_DIR" checkout --quiet "$KSU_TAG" 2>/dev/null \
   || warn "无法切到 $KSU_TAG, 使用默认分支"
+
+# 修掉音量键安全模式的误触发:
+# 原逻辑 if (val) 会把"按住产生的自动重复(val==2)"也当成一次按下, 按住约 1 秒
+# 就能凑出十几个计数(阈值只要 3) -> 没按也会自己进安全模式。
+# 改成只统计首次按下(val==1) 且仅开机后 60 秒内采样。
+if [ -f "$REPO_ROOT/scripts/ksu_safe_mode_fixup.js" ]; then
+  log "修正音量键安全模式误触发 (只计首次按下, 限开机 60 秒内)"
+  node "$REPO_ROOT/scripts/ksu_safe_mode_fixup.js" "$KSU_DIR" \
+    || die "音量键安全模式修正失败"
+fi
+
 KSU_COMMITS="$(git -C "$KSU_DIR" rev-list --count HEAD)"
 KSU_VERSION="$((30000 + KSU_COMMITS))"
 
