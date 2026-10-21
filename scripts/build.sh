@@ -47,6 +47,7 @@ KSU_EXPECTED_VERSION="${KSU_EXPECTED_VERSION:-32960}"
 APPLY_FENGCHI="${APPLY_FENGCHI:-1}"
 FENGCHI_PATCH_URL="${FENGCHI_PATCH_URL:-}"
 APPLY_SUSFS="${APPLY_SUSFS:-0}"
+SUSFS_REF="${SUSFS_REF:-}"            # 可选: 锁定 susfs4ksu 的提交/分支
 SUSFS_APPLIED="${SUSFS_APPLIED:-0}"   # 由第 5 节置 1, 供后续校验/build-info 使用
 # APPLY_KSU=0: 内核里【不】集成 KernelSU。
 # 一加 Ace 6 这台机器的 root 是 init_boot ramdisk 里的 kernelsu.ko (LKM 模式,
@@ -390,6 +391,17 @@ if [ "$APPLY_SUSFS" = "1" ]; then
   }
   [ -f "$SUSFS_DIR/kernel_patches/50_add_susfs_in_gki-android15-6.6.patch" ] \
     || die "susfs4ksu 缺少 6.6 内核补丁"
+
+  # 锁定/记录上游提交与版本 (SUSFS 上游不升版本号时, 只能靠 commit 复现)
+  if [ -n "$SUSFS_REF" ]; then
+    git -C "$SUSFS_DIR" fetch --depth=1 origin "$SUSFS_REF" >/dev/null 2>&1 \
+      && git -C "$SUSFS_DIR" checkout -q FETCH_HEAD 2>/dev/null \
+      && echo "    已切到指定提交: $SUSFS_REF" \
+      || warn "切换到 $SUSFS_REF 失败, 使用分支默认 HEAD"
+  fi
+  SUSFS_COMMIT="$(git -C "$SUSFS_DIR" rev-parse --short HEAD 2>/dev/null || echo unknown)"
+  SUSFS_VER="$(sed -n 's/.*SUSFS_VERSION[[:space:]]*"\([^"]*\)".*/\1/p' "$SUSFS_DIR/kernel_patches/include/linux/susfs.h" 2>/dev/null | head -1)"
+  echo "    SUSFS 版本: ${SUSFS_VER:-unknown}  提交: $SUSFS_COMMIT"
   bash "$REPO_ROOT/scripts/apply_susfs.sh" "$SUSFS_DIR" "$CFGFILE" \
     || die "SUSFS 集成失败 (见上方 [susfs] 输出)"
   SUSFS_APPLIED=1
@@ -662,6 +674,8 @@ cp "$IMAGE" "$WORKDIR/out/Image"
   echo "KSU_EXPECTED_HASH=$KSU_EXPECTED_HASH"
   echo "FENGCHI=$APPLY_FENGCHI"
   echo "SUSFS=$SUSFS_APPLIED"
+  echo "SUSFS_VERSION=${SUSFS_VER:-}"
+  echo "SUSFS_COMMIT=${SUSFS_COMMIT:-}"
   echo "BUILT_AT=$(date -u '+%Y-%m-%d %H:%M:%S UTC')"
 } | tee "$WORKDIR/out/build-info.txt"
 
