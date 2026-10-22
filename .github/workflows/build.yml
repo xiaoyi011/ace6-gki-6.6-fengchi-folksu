@@ -17,10 +17,6 @@ on:
         description: '机型专用风驰补丁 URL (留空=用仓库内 fengchi-ace6.patch; 如 Ace5 Pro 用 WildKernels oneplus/hmbird/fengchi_OP-ACE-5-PRO_A15.patch)'
         type: string
         default: ''
-      keep_localversion_auto:
-        description: '保留 CONFIG_LOCALVERSION_AUTO=y (MODULE_SCMVERSION / 动态 task_struct 需要)'
-        type: boolean
-        default: false
       susfs_ref:
         description: '可选: 锁定 susfs4ksu 的提交/分支 (留空=分支 HEAD)'
         type: string
@@ -209,7 +205,6 @@ jobs:
           FENGCHI_PATCH_URL: ${{ github.event.inputs.fengchi_patch_url }}
           APPLY_SUSFS: ${{ github.event.inputs.apply_susfs == 'true' && '1' || '0' }}
           SUSFS_REF: ${{ github.event.inputs.susfs_ref }}
-          KEEP_LOCALVERSION_AUTO: ${{ github.event.inputs.keep_localversion_auto == 'true' && '1' || '0' }}
           APPLY_KSU: ${{ github.event.inputs.apply_ksu == 'true' && '1' || '0' }}
           APPLY_ZRAM: ${{ github.event.inputs.apply_zram == 'true' && '1' || '0' }}
           APPLY_NET: ${{ github.event.inputs.apply_net == 'true' && '1' || '0' }}
