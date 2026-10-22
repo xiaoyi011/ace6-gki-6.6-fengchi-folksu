@@ -1,7 +1,7 @@
-name: Build Ace6 GKI 6.6 (fengchi + FolkSU)
+name: Build Ace6 GKI 6.6 (fengchi + SukiSU)
 
 # 一加 Ace 6 (PLQ110 / ossi / SM8750 "sun")
-#   GKI 6.6 官方 ace_6 源码 + 风驰内核(HMBIRD/scx) + FolkSU(KernelSU, UAPI=5)
+#   GKI 6.6 官方 ace_6 源码 + 风驰内核(HMBIRD/scx) + SukiSU Ultra(KernelSU fork, UAPI=5)
 
 on:
   workflow_dispatch:
@@ -46,11 +46,11 @@ on:
       kernel_repo:
         description: '内核源码仓库 (完整厂商树才有原装风驰 HMBIRD)'
         type: string
-        default: 'https://github.com/schqiushui/android_kernel_common_oneplus_sm8750.git'
+        default: 'https://github.com/OnePlusOSS/android_kernel_common_oneplus_sm8750.git'
       kernel_branch:
         description: '内核源码分支 (b_*=公开阉割版只有 sched_ext; v_*=完整厂商树自带 HMBIRD)'
         type: string
-        default: 'oneplus/sm8750_v_16.0.0_ace_6'
+        default: 'oneplus/sm8750_b_16.0.0_ace_6'
       device_tag:
         description: '机型短标识(产物/zip命名用, 如 ace6/op13/pad3)'
         type: string
@@ -64,26 +64,26 @@ on:
         type: string
         default: 'PLQ110/ossi/SM8750'
       ksu_expected_version:
-        description: 'FolkSU KSU_VERSION (须与管理器 APK 版本号一致)'
+        description: 'SukiSU KSU_VERSION (须与管理器 APK 版本号一致)'
         type: string
-        default: '32787'
+        default: '40994'
       localversion:
         description: '内核版本后缀 (默认对齐出厂内核的完整版本串)'
         type: string
-        default: '-android15-8-g9bc34d5b0c79-abogki537459655-4k'
+        default: '-android15-8-g93e223c276e7-abogki500782043-4k'
       toolchain:
         description: '工具链: android = Android clang r510928 (出厂/参考/社区可用内核均用它); ubuntu = 发行版 clang-18'
         type: choice
         options: [android, ubuntu]
         default: android
       ksu_expected_size:
-        description: 'FolkSU 管理器证书长度 (十六进制)'
+        description: 'SukiSU 管理器证书长度 (十六进制)'
         type: string
-        default: '0x2cc'
+        default: '0x35c'
       ksu_expected_hash:
-        description: 'FolkSU 管理器证书 SHA-256'
+        description: 'SukiSU 管理器证书 SHA-256'
         type: string
-        default: '2d89b50aaf1db013c2b6738f973f48b62ea21a3a8d7216bfec3521065d448458'
+        default: '947ae944f3de4ed4c21a7e4f7953ecf351bfa2b36239da37a34111ad29993eef'
       build_target:
         description: 'make 目标 (Image 最快, all 会连模块一起编)'
         type: string
