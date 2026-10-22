@@ -101,6 +101,7 @@ KSU_EXPECTED_HASH="${KSU_EXPECTED_HASH:-2d89b50aaf1db013c2b6738f973f48b62ea21a3a
 # 注: vendor_dlkm 里还有 -o-4k / -o-g1524d9b076be-4k 两种旧串, 内核侧的 same_magic() 在
 #     CONFIG_MODVERSIONS 下会忽略版本段, 所以这里取"出厂串"是为了满足 system_dlkm 那一侧。
 LOCALVERSION_SUFFIX="${LOCALVERSION_SUFFIX:--android15-8-g9bc34d5b0c79-abogki537459655-4k}"
+KEEP_LOCALVERSION_AUTO="${KEEP_LOCALVERSION_AUTO:-0}"   # 1=保留 LOCALVERSION_AUTO=y (MODULE_SCMVERSION 的依赖)
 
 CLANG_VER="${CLANG_VER:-18}"
 # 工具链选择:
@@ -351,10 +352,21 @@ fi
 # --------------------------- 4. 锁定内核版本后缀 ------------------------------
 log "锁定内核版本后缀: $LOCALVERSION_SUFFIX"
 sed -i "s|^CONFIG_LOCALVERSION=.*|CONFIG_LOCALVERSION=\"${LOCALVERSION_SUFFIX}\"|" "$CFGFILE"
-if grep -q '^CONFIG_LOCALVERSION_AUTO=' "$CFGFILE"; then
-  sed -i 's|^CONFIG_LOCALVERSION_AUTO=.*|CONFIG_LOCALVERSION_AUTO=n|' "$CFGFILE"
+if [ "$KEEP_LOCALVERSION_AUTO" = "1" ]; then
+  # 出厂内核是 AUTO=y (CONFIG_MODULE_SCMVERSION / 动态 task_struct 都依赖它),
+  # 这里保留 y, 版本串会多出 -g<sha>/-dirty 后缀(仅是观感, modversions 下不参与匹配)
+  if grep -q '^CONFIG_LOCALVERSION_AUTO=' "$CFGFILE"; then
+    sed -i 's|^CONFIG_LOCALVERSION_AUTO=.*|CONFIG_LOCALVERSION_AUTO=y|' "$CFGFILE"
+  else
+    echo 'CONFIG_LOCALVERSION_AUTO=y' >> "$CFGFILE"
+  fi
+  echo "    保留 LOCALVERSION_AUTO=y (为了 MODULE_SCMVERSION / 动态 task_struct)"
 else
-  echo 'CONFIG_LOCALVERSION_AUTO=n' >> "$CFGFILE"
+  if grep -q '^CONFIG_LOCALVERSION_AUTO=' "$CFGFILE"; then
+    sed -i 's|^CONFIG_LOCALVERSION_AUTO=.*|CONFIG_LOCALVERSION_AUTO=n|' "$CFGFILE"
+  else
+    echo 'CONFIG_LOCALVERSION_AUTO=n' >> "$CFGFILE"
+  fi
 fi
 # 去掉 setlocalversion 末尾的 ${scm_version}, 避免 -dirty/+ 污染 vermagic
 sed -i 's/\${scm_version}//' scripts/setlocalversion
