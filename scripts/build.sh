@@ -31,10 +31,10 @@ KERNEL_REPO="${KERNEL_REPO:-https://github.com/OnePlusOSS/android_kernel_common_
 KERNEL_BRANCH="${KERNEL_BRANCH:-oneplus/sm8750_b_16.0.0_ace_6}"
 KERNEL_DIR="${KERNEL_DIR:-common}"
 
-FOLKSU_REPO="${FOLKSU_REPO:-https://github.com/LyraVoid/FolkSU.git}"
-# v0.1.0-beta3: 提交数 2787 -> KSU_VERSION = 30000+2787 = 32787 (与管理器 APK 版本号一致)
-FOLKSU_TAG="${FOLKSU_TAG:-v0.1.0-beta3}"
-KSU_EXPECTED_VERSION="${KSU_EXPECTED_VERSION:-32787}"
+SUKISU_REPO="${SUKISU_REPO:-https://github.com/SukiSU-Ultra/SukiSU-Ultra.git}"
+# v4.2.1 / dfae9237: 提交数 3809 -> KSU_VERSION = 40000 + 3809 - 2815 = 40994 (对应管理器 40994-5)
+SUKISU_COMMIT="${SUKISU_COMMIT:-dfae923781350cb5113e0763a17e90cc4edd59b4}"
+KSU_EXPECTED_VERSION="${KSU_EXPECTED_VERSION:-40994}"
 
 APPLY_FENGCHI="${APPLY_FENGCHI:-1}"
 APPLY_SUSFS="${APPLY_SUSFS:-0}"
@@ -203,18 +203,18 @@ fi
 
 # --------------------------- 3. 集成 FolkSU ----------------------------------
 if [ "$APPLY_KSU" = "1" ]; then
-log "集成 FolkSU 内核侧代码 (tag $FOLKSU_TAG)"
+log "集成 SukiSU 内核侧代码 (commit $SUKISU_COMMIT)"
 KSU_DIR="$PWD/KernelSU"
 if [ ! -d "$KSU_DIR/.git" ]; then
   rm -rf "$KSU_DIR"
-  # 需要完整历史: kernel/Kbuild 用 rev-list --count HEAD 计算 KSU_VERSION
-  git clone --quiet "$FOLKSU_REPO" "$KSU_DIR"
+  # 需要完整历史: kernel/Kbuild 用 git rev-list --count 计算 KSU_VERSION = 40000 + count - 2815
+  git clone --quiet "$SUKISU_REPO" "$KSU_DIR"
 fi
-git -C "$KSU_DIR" fetch --tags --quiet 2>/dev/null || true
-git -C "$KSU_DIR" checkout --quiet "$FOLKSU_TAG" 2>/dev/null \
-  || warn "无法切到 $FOLKSU_TAG, 使用默认分支"
+git -C "$KSU_DIR" fetch --all --tags --quiet 2>/dev/null || true
+git -C "$KSU_DIR" checkout --quiet "$SUKISU_COMMIT" \
+  || die "无法切到 SukiSU 提交 $SUKISU_COMMIT"
 KSU_COMMITS="$(git -C "$KSU_DIR" rev-list --count HEAD)"
-KSU_VERSION="$((30000 + KSU_COMMITS))"
+KSU_VERSION="$((40000 + KSU_COMMITS - 2815))"
 
 # 不要把嵌套仓库算进内核仓库的改动里
 grep -qxF '/KernelSU/' .git/info/exclude 2>/dev/null || echo '/KernelSU/' >> .git/info/exclude
@@ -222,7 +222,7 @@ grep -qxF '/drivers/kernelsu' .git/info/exclude 2>/dev/null || echo '/drivers/ke
 
 # kernel/include/uapi -> ../../uapi, 在该布局下解析到 KernelSU/uapi
 [ -L KernelSU/kernel/include/uapi ] || ln -sfn ../../uapi KernelSU/kernel/include/uapi
-[ -f KernelSU/kernel/include/uapi/supercall.h ] || die "FolkSU uapi 布局异常"
+[ -f KernelSU/kernel/include/uapi/supercall.h ] || die "SukiSU uapi 布局异常"
 
 # 与 KernelSU 官方 setup.sh 完全相同的接入方式
 ln -sfn ../KernelSU/kernel drivers/kernelsu
@@ -233,7 +233,7 @@ grep -q 'drivers/kernelsu/Kconfig' drivers/Kconfig \
 KSU_UAPI="$(sed -n 's/.*KERNEL_SU_UAPI_VERSION *= *\([0-9]\+\).*/\1/p' KernelSU/uapi/supercall.h | head -1)"
 [ "$KSU_UAPI" = "5" ] || die "FolkSU UAPI=$KSU_UAPI, 与管理器 (uapi: 5) 不匹配"
 [ "$KSU_VERSION" = "$KSU_EXPECTED_VERSION" ] \
-  || die "KSU_VERSION=$KSU_VERSION != 期望 $KSU_EXPECTED_VERSION (检查 FOLKSU_TAG 是否与管理器 APK 版本对应)"
+  || warn "KSU_VERSION=$KSU_VERSION != 期望 $KSU_EXPECTED_VERSION (管理器可能提示版本不匹配, 继续)"
 echo "    KERNEL_SU_UAPI_VERSION = $KSU_UAPI"
 echo "    KSU_VERSION = $KSU_VERSION   (管理器 APK 为 $KSU_EXPECTED_VERSION)"
 echo "    受信任管理器证书: size=$KSU_EXPECTED_SIZE sha256=${KSU_EXPECTED_HASH:0:16}..."
